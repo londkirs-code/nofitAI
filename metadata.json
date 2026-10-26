@@ -1,0 +1,6 @@
+{
+  "name": "NotifAI",
+  "description": "צ'אט AI חכם ישירות מתוך התראות המערכת עם מענה מיידי, תמיכה בריבוי מפתחות וספקים, ניהול מכסות אוטומטי ואבטחה מירבית.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
