@@ -333,6 +333,23 @@ class AiRepository(
 
     private fun readAttachmentFromUri(uri: Uri): AttachmentData? {
         return try {
+            if (uri.scheme == "file" || (uri.scheme == null && uri.path != null)) {
+                val file = java.io.File(uri.path ?: "")
+                if (!file.exists()) return null
+                val bytes = file.readBytes()
+                val mime = when {
+                    file.name.endsWith(".jpg", true) || file.name.endsWith(".jpeg", true) -> "image/jpeg"
+                    file.name.endsWith(".png", true) -> "image/png"
+                    file.name.endsWith(".webp", true) -> "image/webp"
+                    else -> "application/octet-stream"
+                }
+                return AttachmentData(
+                    name = file.name,
+                    mimeType = mime,
+                    bytes = bytes
+                )
+            }
+
             val contentResolver = context.contentResolver
             val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
             var fileName = "attachment"

@@ -23,7 +23,9 @@ import com.example.NotifAiApplication
 import com.example.R
 import com.example.data.repository.QueryResult
 import com.example.receiver.NotificationActionReceiver
+import com.example.ui.ChatDialogActivity
 import com.example.ui.FullResponseActivity
+import com.example.ui.ScreenCaptureActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -260,22 +262,20 @@ class NotificationChatService : Service() {
             copyPendingIntent
         ).build()
 
-        // Full Response Viewer Action
-        val fullResponseIntent = Intent(this, FullResponseActivity::class.java).apply {
+        // Chat Dialog Independent Viewer Action
+        val chatDialogIntent = Intent(this, ChatDialogActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(FullResponseActivity.EXTRA_RESPONSE_TEXT, latestFullResponse)
-            putExtra(FullResponseActivity.EXTRA_MODEL_NAME, latestModelUsed)
         }
-        val fullResponsePendingIntent = PendingIntent.getActivity(
+        val chatDialogPendingIntent = PendingIntent.getActivity(
             this,
             103,
-            fullResponseIntent,
+            chatDialogIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val fullViewAction = NotificationCompat.Action.Builder(
             android.R.drawable.ic_menu_view,
-            "📜 תשובה מלאה",
-            fullResponsePendingIntent
+            "💬 חלון שיחה",
+            chatDialogPendingIntent
         ).build()
 
         // Attach File Action
@@ -310,15 +310,14 @@ class NotificationChatService : Service() {
             newChatPendingIntent
         ).build()
 
-        // Screenshot Action
-        val screenshotIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra(MainActivity.EXTRA_CAPTURE_SCREENSHOT, true)
+        // Screenshot Action (Broadcast for instant capture via AccessibilityService or guidance)
+        val screenshotBroadcastIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_SCREENSHOT
         }
-        val screenshotPendingIntent = PendingIntent.getActivity(
+        val screenshotPendingIntent = PendingIntent.getBroadcast(
             this,
             106,
-            screenshotIntent,
+            screenshotBroadcastIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val screenshotAction = NotificationCompat.Action.Builder(
@@ -327,14 +326,14 @@ class NotificationChatService : Service() {
             screenshotPendingIntent
         ).build()
 
-        // Content Intent (clicking notification opens app)
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // Content Intent (Clicking on the notification opens the independent dialog window!)
+        val openDialogIntent = Intent(this, ChatDialogActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val openAppPendingIntent = PendingIntent.getActivity(
+        val openDialogPendingIntent = PendingIntent.getActivity(
             this,
             100,
-            openAppIntent,
+            openDialogIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -345,7 +344,7 @@ class NotificationChatService : Service() {
             .setStyle(messagingStyle)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setContentIntent(openAppPendingIntent)
+            .setContentIntent(openDialogPendingIntent)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColor(Color.parseColor("#38BDF8"))

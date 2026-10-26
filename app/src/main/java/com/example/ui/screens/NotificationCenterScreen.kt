@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
@@ -181,6 +183,99 @@ fun NotificationCenterScreen(
                         isSuccess = isServiceActive,
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        // Instant Screenshot 1-Click Status Card
+        val isFastCaptureActive = com.example.service.FastScreenCaptureAccessibilityService.instance != null
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isFastCaptureActive) {
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                } else {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                }
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = if (isFastCaptureActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "צילום מסך מיידי (ללא אישור בכל פעם)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isFastCaptureActive) "מופעל ⚡ לחיצה על צילום מסך מצלמת מיד ללא שאלות" else "מומלץ להפעיל כדי לא לקבל שאלת אישור בכל צילום",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                if (!isFastCaptureActive) {
+                    Text(
+                        text = "כדי לצלם מסך ישירות מתוך ההתראה בלחיצה אחת בלי שגוגל ישאל בכל פעם: הפעל פעם אחת את 'NotifAI' בהגדרות הנגישות.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp
+                    )
+                    Button(
+                        onClick = {
+                            com.example.service.FastScreenCaptureAccessibilityService.openAccessibilitySettings(context)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("enable_fast_capture_btn")
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("⚡ הפעל צילום מיידי (בהגדרות נגישות)", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "השירות מחובר! כל לחיצה על 'צילום מסך' בהתראה תצלם ותנתח מיידית.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         }
@@ -344,13 +439,14 @@ fun NotificationCenterScreen(
 
                     OutlinedButton(
                         onClick = {
-                            val activity = context as? android.app.Activity
-                            if (activity != null) {
-                                viewModel.sendScreenshot(
-                                    activity = activity,
-                                    customPrompt = testQueryInput.ifBlank { "אנא נתח והסבר את מה שמופיע בצילום המסך" }
-                                )
-                                testQueryInput = ""
+                            val fastService = com.example.service.FastScreenCaptureAccessibilityService.instance
+                            if (fastService != null) {
+                                fastService.captureNow()
+                            } else {
+                                val captureIntent = android.content.Intent(context, com.example.ui.ScreenCaptureActivity::class.java).apply {
+                                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                }
+                                context.startActivity(captureIntent)
                             }
                         },
                         modifier = Modifier
@@ -359,7 +455,7 @@ fun NotificationCenterScreen(
                     ) {
                         Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("📸 שלח צילום מסך", fontWeight = FontWeight.Bold)
+                        Text("📸 צילום מסך", fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(

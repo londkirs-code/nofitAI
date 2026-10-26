@@ -201,9 +201,14 @@ fun MainAppContent(
         }
 
         if (intent?.getBooleanExtra(MainActivity.EXTRA_CAPTURE_SCREENSHOT, false) == true) {
-            val activity = context as? android.app.Activity
-            if (activity != null) {
-                viewModel.sendScreenshot(activity)
+            val fastService = com.example.service.FastScreenCaptureAccessibilityService.instance
+            if (fastService != null) {
+                fastService.captureNow()
+            } else {
+                val captureIntent = Intent(context, com.example.ui.ScreenCaptureActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                context.startActivity(captureIntent)
             }
         }
     }

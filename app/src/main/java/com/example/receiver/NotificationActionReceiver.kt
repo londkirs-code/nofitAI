@@ -28,6 +28,17 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
                 context.startService(serviceIntent)
             }
+            ACTION_SCREENSHOT -> {
+                val accessibilityService = com.example.service.FastScreenCaptureAccessibilityService.instance
+                if (accessibilityService != null) {
+                    accessibilityService.captureNow()
+                } else {
+                    val captureIntent = Intent(context, com.example.ui.ScreenCaptureActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                    context.startActivity(captureIntent)
+                }
+            }
         }
     }
 
@@ -35,5 +46,6 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_DIRECT_REPLY = "com.example.notifai.ACTION_DIRECT_REPLY"
         const val ACTION_COPY_RESPONSE = "com.example.notifai.ACTION_COPY_RESPONSE"
         const val ACTION_NEW_CHAT = "com.example.notifai.ACTION_NEW_CHAT"
+        const val ACTION_SCREENSHOT = "com.example.notifai.ACTION_SCREENSHOT"
     }
 }
