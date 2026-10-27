@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -28,8 +30,10 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PhonelinkLock
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.ScreenshotMonitor
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,6 +45,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.window.DialogProperties
+import com.example.util.MediaStorageManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +77,10 @@ fun SecuritySettingsScreen(
     var hasPin by remember { mutableStateOf(AppLockManager.hasPin(context)) }
     var autoLockBg by remember { mutableStateOf(AppLockManager.isAutoLockOnBackground(context)) }
     var showSetupPinDialog by remember { mutableStateOf(false) }
+
+    var isMediaSavingEnabled by remember { mutableStateOf(MediaStorageManager.isMediaSavingEnabled(context)) }
+    var mediaSizeBytes by remember { mutableStateOf(MediaStorageManager.getTotalSavedMediaSizeBytes(context)) }
+    var showClearMediaConfirmDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -364,6 +375,162 @@ fun SecuritySettingsScreen(
                 }
             }
         }
+
+        // Media & Storage Management Card
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(
+                                    if (isMediaSavingEnabled) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceContainer,
+                                    CircleShape
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SdStorage,
+                                contentDescription = null,
+                                tint = if (isMediaSavingEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "שמירת מדיה בצ'אט (חיסכון באחסון)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isMediaSavingEnabled) "צילומי מסך, קבצים והקלטות נשמרים בהיסטוריה" else "מצב חיסכון: מדיה אינה נשמרת בזיכרון",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isMediaSavingEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Switch(
+                        checked = isMediaSavingEnabled,
+                        onCheckedChange = { checked ->
+                            isMediaSavingEnabled = checked
+                            MediaStorageManager.setMediaSavingEnabled(context, checked)
+                            val msg = if (checked) "שמירת מדיה בהיסטוריית השיחות הופעלה 📸" else "מצב חיסכון הופעל: קבצי מדיה חדשים לא יישמרו 💾"
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+                }
+
+                Text(
+                    text = "מאפשר לשמור צילומי מסך, קבצים מצורפים והקלטות קוליות בזיכרון המכשיר לצפייה חוזרת בהיסטוריית השיחות. משתמשים המעוניינים לחסוך באחסון יכולים לכבות אפשרות זו בכל עת.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Storage size row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "נפח מדיה שמורה נוכחי:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = MediaStorageManager.formatMediaSize(mediaSizeBytes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // Clear media button
+                OutlinedButton(
+                    onClick = { showClearMediaConfirmDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = mediaSizeBytes > 0
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteSweep,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = if (mediaSizeBytes > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "נקה את כל קבצי המדיה מהמכשיר",
+                        color = if (mediaSizeBytes > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        }
+    }
+
+    if (showClearMediaConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearMediaConfirmDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = "ניקוי כל המדיה השמורה",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "האם אתה בטוח שברצונך למחוק את כל קבצי התמונות, צילומי המסך וההקלטות השמורים בהיסטוריה?\n\nהטקסט של השיחות יישמר במלואו, ורק קבצי המדיה הכבדים יימחקו לצורך חיסכון בנפח האחסון.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        MediaStorageManager.clearAllSavedMedia(context)
+                        mediaSizeBytes = 0L
+                        showClearMediaConfirmDialog = false
+                        Toast.makeText(context, "נמחקו קבצי מדיה ושוחרר נפח אחסון! 🧹", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("נקה מדיה עכשיו", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearMediaConfirmDialog = false }) {
+                    Text("ביטול")
+                }
+            }
+        )
     }
 
     if (showSetupPinDialog) {

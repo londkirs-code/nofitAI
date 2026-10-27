@@ -144,12 +144,42 @@ class FastScreenCaptureAccessibilityService : AccessibilityService() {
         fun isServiceRunning(): Boolean = instance != null
 
         fun isAccessibilityServiceEnabled(context: Context): Boolean {
-            val expectedServiceName = "${context.packageName}/${FastScreenCaptureAccessibilityService::class.java.canonicalName}"
-            val enabledServices = Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: return false
-            return enabledServices.split(":").any { it.equals(expectedServiceName, ignoreCase = true) }
+            if (instance != null) return true
+
+            // 1. AccessibilityManager API (standard system check)
+            try {
+                val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager
+                if (am != null) {
+                    val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                    val pkg = context.packageName
+                    for (service in enabledServices) {
+                        val sInfo = service.resolveInfo?.serviceInfo ?: continue
+                        if (sInfo.packageName == pkg && sInfo.name.contains("FastScreenCaptureAccessibilityService")) {
+                            return true
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            // 2. Settings.Secure fallback check (supports full canonical name and shortened relative names)
+            try {
+                val enabledServices = Settings.Secure.getString(
+                    context.contentResolver,
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: return false
+                val pkg = context.packageName
+                val className = FastScreenCaptureAccessibilityService::class.java.simpleName
+                return enabledServices.split(":").any { item ->
+                    val trimmed = item.trim()
+                    trimmed.contains(pkg) && trimmed.contains(className)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+
+            return false
         }
 
         fun openAccessibilitySettings(context: Context) {

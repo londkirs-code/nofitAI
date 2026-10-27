@@ -1,24 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:pathData="M0,0h108v108h-108z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:angle="315"
-                android:startColor="#060A16"
-                android:centerColor="#0B132B"
-                android:endColor="#1C2541"
-                android:type="linear" />
-        </aapt:attr>
-    </path>
-    <!-- Subtle cyber grid lines -->
-    <path
-        android:strokeWidth="0.5"
-        android:strokeColor="#1E293B"
-        android:pathData="M0,36 H108 M0,72 H108 M36,0 V108 M72,0 V108" />
+        android:fillColor="#000000"
+        android:pathData="M0,0h108v108h-108z" />
 </vector>

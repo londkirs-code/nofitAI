@@ -98,6 +98,19 @@ class AiRepository(
         // Read attachment if present
         val attachment = directAttachment ?: attachmentUri?.let { readAttachmentFromUri(it) }
 
+        // Persist media permanently in chat storage (respects user storage preference)
+        val persistentMediaUri = if (attachment != null) {
+            com.example.util.MediaStorageManager.persistMediaForChat(
+                context = context,
+                sourceUri = attachmentUri,
+                directBytes = directAttachment?.bytes,
+                mimeType = attachment.mimeType,
+                originalName = attachment.name
+            )
+        } else {
+            null
+        }
+
         // Fetch prior turns of this conversation for conversation continuity
         val priorMessages = chatDao.getMessagesForConversation(conv.id)
             .filter { it.role == "user" || it.role == "assistant" }
@@ -117,13 +130,13 @@ class AiRepository(
             ""
         }
 
-        // Save current user message to database
+        // Save current user message to database with persistent media uri
         val userMessage = ChatMessageEntity(
             conversationId = conv.id,
             role = "user",
             content = prompt,
             timestamp = System.currentTimeMillis(),
-            attachmentUri = attachmentUri?.toString(),
+            attachmentUri = persistentMediaUri ?: attachmentUri?.toString(),
             attachmentMimeType = attachment?.mimeType,
             attachmentName = attachment?.name
         )
@@ -280,7 +293,12 @@ class AiRepository(
         maxTokens: Int = 4096,
         systemPrompt: String? = null
     ) {
-        val encrypted = CryptoEngine.encrypt(plainKey)
+        val existing = if (id != null) apiKeyDao.getKeyById(id) else null
+        val encrypted = if (plainKey.isBlank() && existing != null) {
+            existing.encryptedKey
+        } else {
+            CryptoEngine.encrypt(plainKey)
+        }
         val key = ApiKeyEntity(
             id = id ?: java.util.UUID.randomUUID().toString(),
             provider = provider,
@@ -294,6 +312,12 @@ class AiRepository(
             systemPrompt = systemPrompt?.takeIf { it.isNotBlank() }
         )
         apiKeyDao.insertOrUpdate(key)
+    }
+
+    suspend fun fetchModelsForKeyId(keyId: String): FetchModelsResponse {
+        val key = apiKeyDao.getKeyById(keyId) ?: return FetchModelsResponse(false, emptyList(), "מפתח לא נמצא")
+        val plainKey = CryptoEngine.decrypt(key.encryptedKey)
+        return apiClient.fetchAvailableModelsDetailed(key.provider, plainKey)
     }
 
     suspend fun fetchAvailableModels(provider: ProviderType, apiKey: String): List<String> {

@@ -12,6 +12,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.example.service.FastScreenCaptureAccessibilityService
 import com.example.service.MediaProjectionCaptureService
 
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 class ScreenCaptureActivity : ComponentActivity() {
 
     private val captureLauncher = registerForActivityResult(
@@ -41,12 +45,26 @@ class ScreenCaptureActivity : ComponentActivity() {
             return
         }
 
-        // 2. If accessibility service is not enabled, guide the user to enable 1-click capture
+        // 2. Check if accessibility service is enabled in system settings
         val isEnabledInSettings = FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(this)
-        if (!isEnabledInSettings) {
-            showInstantCaptureGuideDialog()
+        if (isEnabledInSettings) {
+            // Already enabled! Wait up to 400ms for binder to connect if process was dormant
+            lifecycleScope.launch {
+                var attempts = 0
+                while (FastScreenCaptureAccessibilityService.instance == null && attempts < 8) {
+                    delay(50)
+                    attempts++
+                }
+                val activeInstance = FastScreenCaptureAccessibilityService.instance
+                if (activeInstance != null) {
+                    activeInstance.captureNow()
+                    finish()
+                } else {
+                    launchMediaProjectionCapture()
+                }
+            }
         } else {
-            launchMediaProjectionCapture()
+            showInstantCaptureGuideDialog()
         }
     }
 

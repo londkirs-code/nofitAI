@@ -3,6 +3,8 @@ package com.example.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import com.example.service.NotificationChatService
 import com.example.ui.AttachContentDialogActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
@@ -56,11 +59,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -168,6 +175,75 @@ fun NotificationCenterScreen(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                // Direct Notification Activation / Management Button
+                if (!isServiceActive) {
+                    Button(
+                        onClick = {
+                            viewModel.toggleService(true)
+                            Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("activate_notification_hero_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "🚀 הפעל התראה עכשיו",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                NotificationChatService.startService(context)
+                                Toast.makeText(context, "ההתראה רועננה ונשלחה מחדש 🔔", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .testTag("refresh_notification_hero_btn")
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("רענן התראה", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.toggleService(false)
+                                Toast.makeText(context, "ההתראה נסגרה", Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .testTag("close_notification_hero_btn")
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("סגור התראה", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 // Stats row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -181,7 +257,7 @@ fun NotificationCenterScreen(
                     )
                     StatusChip(
                         title = "מצב התראה",
-                        value = if (isServiceActive) "קבועה (דביקה)" else "כבויה",
+                        value = if (isServiceActive) "קבועה (פעילה)" else "כבויה / נסגרה",
                         isSuccess = isServiceActive,
                         modifier = Modifier.weight(1f)
                     )
@@ -189,8 +265,24 @@ fun NotificationCenterScreen(
             }
         }
 
-        // Instant Screenshot 1-Click Status Card
-        val isFastCaptureActive = com.example.service.FastScreenCaptureAccessibilityService.instance != null
+        // Instant Screenshot 1-Click Status Card with automatic detection
+        val lifecycleOwner = LocalLifecycleOwner.current
+        var isFastCaptureActive by remember {
+            mutableStateOf(com.example.service.FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(context))
+        }
+
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    viewModel.syncServiceActiveState()
+                    isFastCaptureActive = com.example.service.FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(context)
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+            }
+        }
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(

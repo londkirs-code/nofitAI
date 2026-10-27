@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -200,7 +201,12 @@ fun HistoryScreen(
     if (showClearConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
-            title = { Text("מחיקת כל ההיסטוריה") },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            title = { Text("מחיקת כל ההיסטוריה", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
             text = { Text("האם אתה בטוח שברצונך למחוק את כל שיחות ה-AI שנשמרו באפליקציה? פעולה זו היא בלתי הפיכה.") },
             confirmButton = {
                 Button(
@@ -412,12 +418,24 @@ fun MessageBubble(message: ChatMessageEntity) {
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = textColor,
-                    lineHeight = 22.sp
-                )
+                if (!message.attachmentUri.isNullOrBlank() || !message.attachmentName.isNullOrBlank()) {
+                    com.example.ui.components.MessageAttachmentView(
+                        attachmentUri = message.attachmentUri,
+                        attachmentMimeType = message.attachmentMimeType,
+                        attachmentName = message.attachmentName,
+                        isUser = isUser
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (message.content.isNotBlank()) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = textColor,
+                        lineHeight = 22.sp
+                    )
+                }
             }
         }
     }

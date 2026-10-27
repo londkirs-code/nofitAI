@@ -55,11 +55,12 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         if (enable) {
             NotificationChatService.startService(getApplication())
         } else {
-            val stopIntent = android.content.Intent(getApplication(), NotificationChatService::class.java).apply {
-                action = NotificationChatService.ACTION_STOP_SERVICE
-            }
-            getApplication<Application>().startService(stopIntent)
+            NotificationChatService.stopService(getApplication())
         }
+    }
+
+    fun syncServiceActiveState() {
+        _isServiceActive.value = NotificationChatService.isRunning
     }
 
     fun selectConversation(id: Long?) {
@@ -165,6 +166,10 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun fetchAvailableModelsDetailed(provider: ProviderType, apiKey: String): FetchModelsResponse {
         return repository.fetchAvailableModelsDetailed(provider, apiKey)
+    }
+
+    suspend fun fetchModelsForKeyId(keyId: String): FetchModelsResponse {
+        return repository.fetchModelsForKeyId(keyId)
     }
 
     fun movePriorityUp(key: ApiKeyEntity) {

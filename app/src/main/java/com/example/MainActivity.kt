@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
@@ -149,13 +150,15 @@ fun MainAppContent(
     var isAppLocked by remember { mutableStateOf(AppLockManager.isLockEnabled(context)) }
     var showQuickSetupPinDialog by remember { mutableStateOf(false) }
 
-    // Auto-lock when app goes to background
+    // Auto-lock when app goes to background & sync service state on resume
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 if (AppLockManager.isLockEnabled(context) && AppLockManager.isAutoLockOnBackground(context)) {
                     isAppLocked = true
                 }
+            } else if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.syncServiceActiveState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -244,6 +247,25 @@ fun MainAppContent(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            if (!isServiceActive) {
+                                viewModel.toggleService(true)
+                                Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
+                            } else {
+                                NotificationChatService.startService(context)
+                                Toast.makeText(context, "ההתראה רועננה מחדש! 🔔", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.testTag("top_bar_notification_action_btn")
+                    ) {
+                        Icon(
+                            imageVector = if (isServiceActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                            contentDescription = if (isServiceActive) "רענן התראה" else "הפעל התראה",
+                            tint = if (isServiceActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
+
                     val lockConfigured = AppLockManager.isLockEnabled(context)
                     IconButton(
                         onClick = {

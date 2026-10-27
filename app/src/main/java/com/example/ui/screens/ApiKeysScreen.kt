@@ -84,7 +84,6 @@ fun ApiKeysScreen(
 
     var showAddKeyDialog by remember { mutableStateOf(false) }
     var keyToEdit by remember { mutableStateOf<ApiKeyEntity?>(null) }
-    var initialDecryptedKey by remember { mutableStateOf("") }
 
     val sortedKeys = remember(apiKeys) { apiKeys.sortedBy { it.priority } }
 
@@ -117,7 +116,6 @@ fun ApiKeysScreen(
             Button(
                 onClick = {
                     keyToEdit = null
-                    initialDecryptedKey = ""
                     showAddKeyDialog = true
                 },
                 modifier = Modifier.testTag("add_key_fab_btn"),
@@ -135,7 +133,6 @@ fun ApiKeysScreen(
             EmptyKeysPlaceholder(
                 onAddClick = {
                     keyToEdit = null
-                    initialDecryptedKey = ""
                     showAddKeyDialog = true
                 }
             )
@@ -154,11 +151,8 @@ fun ApiKeysScreen(
                         onToggle = { viewModel.toggleKeyEnabled(key) },
                         onClearSuspension = { viewModel.clearKeySuspension(key.id) },
                         onEdit = {
-                            scope.launch {
-                                initialDecryptedKey = viewModel.getDecryptedKey(key.id)
-                                keyToEdit = key
-                                showAddKeyDialog = true
-                            }
+                            keyToEdit = key
+                            showAddKeyDialog = true
                         },
                         onDelete = { viewModel.deleteKey(key) }
                     )
@@ -170,12 +164,17 @@ fun ApiKeysScreen(
     if (showAddKeyDialog) {
         AddKeyDialog(
             existingKey = keyToEdit,
-            initialDecryptedKey = initialDecryptedKey,
             nextPriority = (sortedKeys.maxOfOrNull { it.priority } ?: 0) + 1,
             onFetchDetailedModels = { provider, rawKey ->
                 viewModel.fetchAvailableModelsDetailed(provider, rawKey)
             },
-            onDismiss = { showAddKeyDialog = false },
+            onFetchDetailedModelsForExistingKey = { keyId ->
+                viewModel.fetchModelsForKeyId(keyId)
+            },
+            onDismiss = {
+                showAddKeyDialog = false
+                keyToEdit = null
+            },
             onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt ->
                 viewModel.addOrUpdateKey(
                     id = keyToEdit?.id,
@@ -189,6 +188,7 @@ fun ApiKeysScreen(
                     systemPrompt = systemPrompt
                 )
                 showAddKeyDialog = false
+                keyToEdit = null
                 Toast.makeText(context, "המפתח והגדרות ה-Playground נשמרו והוצפנו בחומרה 🔐", Toast.LENGTH_SHORT).show()
             }
         )

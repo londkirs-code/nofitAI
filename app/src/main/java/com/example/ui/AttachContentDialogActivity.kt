@@ -62,6 +62,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -76,6 +78,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -142,6 +145,7 @@ fun AttachContentDialogScreen(
 ) {
     val context = LocalContext.current
     var currentMode by remember { mutableStateOf(AttachDialogMode.MENU) }
+    var showCloseNotificationConfirm by remember { mutableStateOf(false) }
 
     // Selected file state
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
@@ -161,6 +165,55 @@ fun AttachContentDialogScreen(
         }
     }
 
+    if (showCloseNotificationConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCloseNotificationConfirm = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = "סגירת התראת NotifAI",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            },
+            text = {
+                Text(
+                    text = "האם אתה בטוח שברצונך לסגור ולהסיר את התראת NotifAI מווילון ההתראות?\n\nתוכל להפעיל אותה שוב בכל עת מתוך האפליקציה.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCloseNotificationConfirm = false
+                        NotificationChatService.stopService(context)
+                        Toast.makeText(context, "התראת NotifAI נסגרה", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.testTag("confirm_close_notification_btn")
+                ) {
+                    Text("כן, סגור התראה", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCloseNotificationConfirm = false },
+                    modifier = Modifier.testTag("cancel_close_notification_btn")
+                ) {
+                    Text("ביטול")
+                }
+            }
+        )
+    }
+
     BackHandler {
         if (currentMode != AttachDialogMode.MENU) {
             currentMode = AttachDialogMode.MENU
@@ -177,9 +230,9 @@ fun AttachContentDialogScreen(
     ) {
         Surface(
             modifier = Modifier
-                .widthIn(max = 480.dp)
-                .fillMaxWidth(0.92f)
-                .padding(16.dp)
+                .widthIn(max = 660.dp)
+                .fillMaxWidth(0.96f)
+                .padding(horizontal = 6.dp, vertical = 12.dp)
                 .clickable(enabled = false) {}, // prevent dismissing when tapping card
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -321,6 +374,9 @@ fun AttachContentDialogScreen(
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "שגיאה בפתיחת בורר הקבצים", Toast.LENGTH_SHORT).show()
                                     }
+                                },
+                                onCloseNotificationClick = {
+                                    showCloseNotificationConfirm = true
                                 }
                             )
                         }
@@ -396,7 +452,8 @@ private fun AttachMenuOptions(
     onScreenshotClick: () -> Unit,
     onVoiceRecordClick: () -> Unit,
     onSpeechToTextClick: () -> Unit,
-    onFileUploadClick: () -> Unit
+    onFileUploadClick: () -> Unit,
+    onCloseNotificationClick: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -444,6 +501,17 @@ private fun AttachMenuOptions(
             accentColor = Color(0xFF059669),
             testTag = "attach_option_file",
             onClick = onFileUploadClick
+        )
+
+        // 5. סגור התראה
+        AttachOptionCard(
+            title = "🛑 סגור התראה",
+            subtitle = "הסר את התראת NotifAI מווילון ההתראות",
+            badgeText = "הסרה",
+            icon = Icons.Default.Close,
+            accentColor = Color(0xFFDC2626),
+            testTag = "attach_option_close_notification",
+            onClick = onCloseNotificationClick
         )
     }
 }

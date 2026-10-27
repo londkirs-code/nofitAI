@@ -278,6 +278,9 @@ class AiApiClient {
         val req = Request.Builder()
             .url("https://openrouter.ai/api/v1/models")
             .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("HTTP-Referer", "https://notifai.app")
+            .addHeader("X-Title", "NotifAI")
+            .addHeader("Accept", "application/json")
             .get()
             .build()
         httpClient.newCall(req).execute().use { resp ->
@@ -588,6 +591,9 @@ class AiApiClient {
 
         val request = Request.Builder()
             .url(url)
+            .addHeader("x-goog-api-key", apiKey)
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Accept", "application/json")
             .post(rootJson.toString().toRequestBody(jsonMediaType))
             .build()
 
@@ -685,6 +691,7 @@ class AiApiClient {
             .addHeader("x-api-key", apiKey)
             .addHeader("anthropic-version", "2023-06-01")
             .addHeader("content-type", "application/json")
+            .addHeader("Accept", "application/json")
             .post(rootJson.toString().toRequestBody(jsonMediaType))
             .build()
 
@@ -730,13 +737,24 @@ class AiApiClient {
 
         val rootJson = JSONObject()
         rootJson.put("model", model)
-        rootJson.put("temperature", temperature.toDouble())
-        rootJson.put("max_tokens", maxTokens)
+
+        // Reasoning models compatibility (OpenAI o1, o3, etc.)
+        val isReasoningModel = (provider == ProviderType.OPENAI || provider == ProviderType.OPENROUTER) &&
+                (model.startsWith("o1", ignoreCase = true) || model.startsWith("o3", ignoreCase = true))
+
+        if (isReasoningModel) {
+            rootJson.put("max_completion_tokens", maxTokens)
+            // Note: temperature is intentionally omitted for reasoning models as per API specs
+        } else {
+            rootJson.put("temperature", temperature.toDouble())
+            rootJson.put("max_tokens", maxTokens)
+        }
 
         val messagesArray = JSONArray()
-        // System message
+        // System message (for o1/o3 modern endpoints use developer role if OpenAI)
         val sysMsg = JSONObject()
-        sysMsg.put("role", "system")
+        val sysRole = if (isReasoningModel && provider == ProviderType.OPENAI) "developer" else "system"
+        sysMsg.put("role", sysRole)
         sysMsg.put("content", systemInstruction)
         messagesArray.put(sysMsg)
 
@@ -788,10 +806,11 @@ class AiApiClient {
             .url(endpoint)
             .addHeader("Authorization", "Bearer $apiKey")
             .addHeader("Content-Type", "application/json")
+            .addHeader("Accept", "application/json")
 
         if (provider == ProviderType.OPENROUTER) {
-            reqBuilder.addHeader("HTTP-Referer", "https://notifai.android")
-            reqBuilder.addHeader("X-Title", "NotifAI Android")
+            reqBuilder.addHeader("HTTP-Referer", "https://notifai.app")
+            reqBuilder.addHeader("X-Title", "NotifAI")
         }
 
         val request = reqBuilder

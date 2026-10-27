@@ -185,7 +185,7 @@ fun ChatDialogScreen(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) { onDismiss() }
-            .padding(horizontal = 14.dp, vertical = 24.dp),
+            .padding(horizontal = 6.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
         // Floating Independent Dialog Card
@@ -197,7 +197,7 @@ fun ChatDialogScreen(
             elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.92f)
+                .fillMaxHeight(0.96f)
                 .border(
                     width = 1.dp,
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -326,97 +326,7 @@ fun ChatDialogScreen(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                 )
 
-                // Highlighted Latest Message Card (Prominent showcase)
-                if (latestBotMessage != null) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 8.dp)
-                            .testTag("latest_response_banner")
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.SmartToy,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "הודעה אחרונה מה-AI",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(
-                                        onClick = {
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            val clip = ClipData.newPlainText("NotifAI Latest", latestBotMessage.content)
-                                            clipboard.setPrimaryClip(clip)
-                                            Toast.makeText(context, "המענה האחרון הועתק! 📋", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = "העתק",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = {
-                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(Intent.EXTRA_TEXT, latestBotMessage.content)
-                                            }
-                                            context.startActivity(Intent.createChooser(shareIntent, "שתף תשובה מ-NotifAI"))
-                                        },
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Share,
-                                            contentDescription = "שתף",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = latestBotMessage.content,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontSize = (14.5 * fontSizeMultiplier).sp,
-                                    lineHeight = (22 * fontSizeMultiplier).sp
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 4,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Subtitle indicating scrollable conversation
+                // Compact Status & Copy All Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -425,28 +335,56 @@ fun ChatDialogScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "כל השיחה (${messageList.size} הודעות - ניתן לגלול):",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = "דו-שיח (${messageList.size} הודעות):",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (messageList.isNotEmpty()) {
-                        TextButton(
-                            onClick = {
-                                val fullText = messageList.joinToString("\n\n") { msg ->
-                                    val sender = if (msg.role == "user") "אתה" else "NotifAI"
-                                    "[$sender]: ${msg.content}"
-                                }
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("NotifAI Full Chat", fullText))
-                                Toast.makeText(context, "כל השיחה הועתקה ללוח! 📋", Toast.LENGTH_SHORT).show()
-                            },
-                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
-                        ) {
-                            Text(
-                                text = "העתק הכל",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = {
+                                    val fullText = messageList.joinToString("\n\n") { msg ->
+                                        val sender = if (msg.role == "user") "אתה" else "NotifAI"
+                                        "[$sender]: ${msg.content}"
+                                    }
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("NotifAI Full Chat", fullText))
+                                    Toast.makeText(context, "כל השיחה הועתקה ללוח! 📋", Toast.LENGTH_SHORT).show()
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "העתק הכל",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    val fullText = messageList.joinToString("\n\n") { msg ->
+                                        val sender = if (msg.role == "user") "אתה" else "NotifAI"
+                                        "[$sender]: ${msg.content}"
+                                    }
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, fullText)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "שתף שיחה מלאה מ-NotifAI"))
+                                },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "שתף הכל",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
@@ -668,6 +606,7 @@ fun ChatMessageBubble(
     onCopy: () -> Unit
 ) {
     val isUser = message.role == "user"
+    val context = LocalContext.current
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val formattedTime = remember(message.timestamp) { timeFormat.format(Date(message.timestamp)) }
 
@@ -749,20 +688,49 @@ fun ChatMessageBubble(
                                     modifier = Modifier.size(13.dp)
                                 )
                             }
+                            IconButton(
+                                onClick = {
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, message.content)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "שתף הודעה זו"))
+                                },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = "שתף",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = (14.5 * fontSizeMultiplier).sp,
-                        lineHeight = (21 * fontSizeMultiplier).sp
-                    ),
-                    color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-                )
+                if (!message.attachmentUri.isNullOrBlank() || !message.attachmentName.isNullOrBlank()) {
+                    com.example.ui.components.MessageAttachmentView(
+                        attachmentUri = message.attachmentUri,
+                        attachmentMimeType = message.attachmentMimeType,
+                        attachmentName = message.attachmentName,
+                        isUser = isUser
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (message.content.isNotBlank()) {
+                    Text(
+                        text = message.content,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = (14.5 * fontSizeMultiplier).sp,
+                            lineHeight = (21 * fontSizeMultiplier).sp
+                        ),
+                        color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
             }
         }
 
