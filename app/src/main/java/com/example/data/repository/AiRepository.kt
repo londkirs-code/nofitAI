@@ -8,6 +8,7 @@ import com.example.data.local.ChatDao
 import com.example.data.model.ApiKeyEntity
 import com.example.data.model.ChatConversationEntity
 import com.example.data.model.ChatMessageEntity
+import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
 import com.example.data.remote.AiApiClient
 import com.example.data.remote.AiCallException
@@ -297,6 +298,10 @@ class AiRepository(
 
     suspend fun fetchAvailableModels(provider: ProviderType, apiKey: String): List<String> {
         return apiClient.fetchAvailableModels(provider, apiKey)
+    }
+
+    suspend fun fetchAvailableModelsDetailed(provider: ProviderType, apiKey: String): FetchModelsResponse {
+        return apiClient.fetchAvailableModelsDetailed(provider, apiKey)
     }
 
     suspend fun getDecryptedKey(id: String): String {

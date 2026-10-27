@@ -10,9 +10,15 @@
         <aapt:attr name="android:fillColor">
             <gradient
                 android:angle="315"
-                android:endColor="#1E293B"
-                android:startColor="#090D16"
+                android:startColor="#060A16"
+                android:centerColor="#0B132B"
+                android:endColor="#1C2541"
                 android:type="linear" />
         </aapt:attr>
     </path>
+    <!-- Subtle cyber grid lines -->
+    <path
+        android:strokeWidth="0.5"
+        android:strokeColor="#1E293B"
+        android:pathData="M0,36 H108 M0,72 H108 M36,0 V108 M72,0 V108" />
 </vector>

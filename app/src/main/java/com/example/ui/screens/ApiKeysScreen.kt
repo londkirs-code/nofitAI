@@ -172,8 +172,8 @@ fun ApiKeysScreen(
             existingKey = keyToEdit,
             initialDecryptedKey = initialDecryptedKey,
             nextPriority = (sortedKeys.maxOfOrNull { it.priority } ?: 0) + 1,
-            onFetchLiveModels = { provider, rawKey ->
-                viewModel.fetchAvailableModels(provider, rawKey)
+            onFetchDetailedModels = { provider, rawKey ->
+                viewModel.fetchAvailableModelsDetailed(provider, rawKey)
             },
             onDismiss = { showAddKeyDialog = false },
             onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt ->

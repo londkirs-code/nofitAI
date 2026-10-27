@@ -16,27 +16,12 @@ enum class ProviderType(
             "deepseek-r1-distill-llama-70b",
             "meta-llama/llama-4-scout-17b-16e-instruct",
             "qwen-qwq-32b",
-            "compound-beta",
             "llama-3.1-8b-instant",
             "gemma2-9b-it"
         ),
         defaultBaseUrl = "https://api.groq.com/openai/v1",
         keyHint = "gsk_...",
         documentationUrl = "console.groq.com/playground"
-    ),
-    GROK(
-        displayName = "xAI Grok (Playground)",
-        defaultModel = "grok-3-latest",
-        suggestedModels = listOf(
-            "grok-3-latest",
-            "grok-3-mini-latest",
-            "grok-2-vision-latest",
-            "grok-2-latest",
-            "grok-beta"
-        ),
-        defaultBaseUrl = "https://api.x.ai/v1",
-        keyHint = "xai-...",
-        documentationUrl = "console.x.ai"
     ),
     GEMINI(
         displayName = "Google Gemini",
@@ -52,9 +37,36 @@ enum class ProviderType(
         keyHint = "AIzaSy...",
         documentationUrl = "aistudio.google.com/apikey"
     ),
+    DEEPSEEK(
+        displayName = "DeepSeek AI",
+        defaultModel = "deepseek-chat",
+        suggestedModels = listOf(
+            "deepseek-chat",
+            "deepseek-reasoner"
+        ),
+        defaultBaseUrl = "https://api.deepseek.com",
+        keyHint = "sk-...",
+        documentationUrl = "platform.deepseek.com"
+    ),
+    OPENROUTER(
+        displayName = "OpenRouter (חינמי ובתשלום)",
+        defaultModel = "meta-llama/llama-3.3-70b-instruct:free",
+        suggestedModels = listOf(
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-r1:free",
+            "deepseek/deepseek-chat:free",
+            "google/gemini-2.0-flash-exp:free",
+            "qwen/qwen-2.5-72b-instruct:free",
+            "anthropic/claude-3.5-sonnet",
+            "openai/gpt-4o"
+        ),
+        defaultBaseUrl = "https://openrouter.ai/api/v1",
+        keyHint = "sk-or-...",
+        documentationUrl = "openrouter.ai/keys"
+    ),
     CLAUDE(
         displayName = "Anthropic Claude",
-        defaultModel = "claude-3-5-haiku-20241022",
+        defaultModel = "claude-3-7-sonnet-latest",
         suggestedModels = listOf(
             "claude-3-7-sonnet-latest",
             "claude-3-5-sonnet-20241022",
@@ -72,26 +84,38 @@ enum class ProviderType(
             "gpt-4o-mini",
             "gpt-4o",
             "o3-mini",
-            "gpt-4.1-mini",
-            "gpt-4.1"
+            "o1-mini",
+            "gpt-4.5-preview"
         ),
         defaultBaseUrl = "https://api.openai.com/v1",
         keyHint = "sk-proj-...",
         documentationUrl = "platform.openai.com/api-keys"
     ),
-    OPENROUTER(
-        displayName = "OpenRouter",
-        defaultModel = "meta-llama/llama-3.3-70b-instruct:free",
+    GROK(
+        displayName = "xAI Grok",
+        defaultModel = "grok-3-latest",
         suggestedModels = listOf(
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "deepseek/deepseek-r1:free",
-            "deepseek/deepseek-chat",
-            "google/gemini-2.0-flash-exp:free",
-            "anthropic/claude-3.5-sonnet"
+            "grok-3-latest",
+            "grok-3-mini-latest",
+            "grok-2-latest",
+            "grok-2-vision-latest"
         ),
-        defaultBaseUrl = "https://openrouter.ai/api/v1",
-        keyHint = "sk-or-...",
-        documentationUrl = "openrouter.ai/keys"
+        defaultBaseUrl = "https://api.x.ai/v1",
+        keyHint = "xai-...",
+        documentationUrl = "console.x.ai"
+    ),
+    MISTRAL(
+        displayName = "Mistral AI",
+        defaultModel = "mistral-large-latest",
+        suggestedModels = listOf(
+            "mistral-large-latest",
+            "codestral-latest",
+            "mistral-small-latest",
+            "open-mistral-nemo"
+        ),
+        defaultBaseUrl = "https://api.mistral.ai/v1",
+        keyHint = "...",
+        documentationUrl = "console.mistral.ai"
     ),
     HUGGINGFACE(
         displayName = "Hugging Face",

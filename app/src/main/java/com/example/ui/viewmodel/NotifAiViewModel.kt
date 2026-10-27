@@ -9,6 +9,7 @@ import com.example.NotifAiApplication
 import com.example.data.model.ApiKeyEntity
 import com.example.data.model.ChatConversationEntity
 import com.example.data.model.ChatMessageEntity
+import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
 import com.example.data.repository.QueryResult
 import com.example.service.NotificationChatService
@@ -160,6 +161,10 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun fetchAvailableModels(provider: ProviderType, apiKey: String): List<String> {
         return repository.fetchAvailableModels(provider, apiKey)
+    }
+
+    suspend fun fetchAvailableModelsDetailed(provider: ProviderType, apiKey: String): FetchModelsResponse {
+        return repository.fetchAvailableModelsDetailed(provider, apiKey)
     }
 
     fun movePriorityUp(key: ApiKeyEntity) {

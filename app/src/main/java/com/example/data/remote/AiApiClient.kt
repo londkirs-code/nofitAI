@@ -1,6 +1,8 @@
 package com.example.data.remote
 
 import android.util.Base64
+import com.example.data.model.AiModelInfo
+import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -86,6 +88,8 @@ class AiApiClient {
             ProviderType.GROK,
             ProviderType.OPENAI,
             ProviderType.OPENROUTER,
+            ProviderType.DEEPSEEK,
+            ProviderType.MISTRAL,
             ProviderType.HUGGINGFACE -> callOpenAiCompatible(
                 provider = provider,
                 apiKey = apiKey,
@@ -101,86 +105,416 @@ class AiApiClient {
     }
 
     /**
-     * Queries the provider's live /models endpoint to list all Playground models available for the API key.
+     * Queries the provider's live /models endpoint and returns a list of model IDs.
      */
     suspend fun fetchAvailableModels(
         provider: ProviderType,
         apiKey: String
     ): List<String> = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext provider.suggestedModels
+        val result = fetchAvailableModelsDetailed(provider, apiKey)
+        if (result.models.isNotEmpty()) {
+            result.models.map { it.id }
+        } else {
+            provider.suggestedModels
+        }
+    }
+
+    /**
+     * Live query to each provider's API with active/free/chat validation and rich status metadata.
+     */
+    suspend fun fetchAvailableModelsDetailed(
+        provider: ProviderType,
+        apiKey: String
+    ): FetchModelsResponse = withContext(Dispatchers.IO) {
+        val trimmedKey = apiKey.trim()
+        if (trimmedKey.isBlank()) {
+            return@withContext FetchModelsResponse(
+                isSuccess = false,
+                models = provider.suggestedModels.map {
+                    AiModelInfo(
+                        id = it,
+                        displayName = it,
+                        isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
+                        isRecommended = true
+                    )
+                },
+                errorMessage = "הזן מפתח API כדי לשלוף את רשימת המודלים הפעילים בזמן אמת"
+            )
+        }
 
         try {
             when (provider) {
-                ProviderType.GEMINI -> {
-                    val req = Request.Builder()
-                        .url("https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}")
-                        .get()
-                        .build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@withContext provider.suggestedModels
-                        val body = resp.body?.string().orEmpty()
-                        val json = JSONObject(body)
-                        val arr = json.optJSONArray("models") ?: return@withContext provider.suggestedModels
-                        val list = mutableListOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val obj = arr.getJSONObject(i)
-                            val name = obj.optString("name", "").removePrefix("models/")
-                            if (name.startsWith("gemini")) {
-                                list.add(name)
-                            }
-                        }
-                        if (list.isNotEmpty()) list else provider.suggestedModels
-                    }
-                }
-                ProviderType.CLAUDE -> {
-                    val req = Request.Builder()
-                        .url("https://api.anthropic.com/v1/models")
-                        .addHeader("x-api-key", apiKey.trim())
-                        .addHeader("anthropic-version", "2023-06-01")
-                        .get()
-                        .build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@withContext provider.suggestedModels
-                        val body = resp.body?.string().orEmpty()
-                        val json = JSONObject(body)
-                        val arr = json.optJSONArray("data") ?: return@withContext provider.suggestedModels
-                        val list = mutableListOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val id = arr.getJSONObject(i).optString("id", "")
-                            if (id.isNotBlank()) list.add(id)
-                        }
-                        if (list.isNotEmpty()) list else provider.suggestedModels
-                    }
-                }
-                ProviderType.GROQ,
-                ProviderType.GROK,
-                ProviderType.OPENAI,
-                ProviderType.OPENROUTER -> {
-                    val modelsUrl = "${provider.defaultBaseUrl}/models"
-                    val req = Request.Builder()
-                        .url(modelsUrl)
-                        .addHeader("Authorization", "Bearer ${apiKey.trim()}")
-                        .get()
-                        .build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@withContext provider.suggestedModels
-                        val body = resp.body?.string().orEmpty()
-                        val json = JSONObject(body)
-                        val arr = json.optJSONArray("data") ?: return@withContext provider.suggestedModels
-                        val list = mutableListOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val id = arr.getJSONObject(i).optString("id", "")
-                            if (id.isNotBlank() && !id.contains("whisper", ignoreCase = true) && !id.contains("tts", ignoreCase = true) && !id.contains("embedding", ignoreCase = true)) {
-                                list.add(id)
-                            }
-                        }
-                        if (list.isNotEmpty()) list.take(40) else provider.suggestedModels
-                    }
-                }
-                ProviderType.HUGGINGFACE -> provider.suggestedModels
+                ProviderType.GEMINI -> fetchGeminiModels(trimmedKey)
+                ProviderType.GROQ -> fetchGroqModels(trimmedKey)
+                ProviderType.OPENROUTER -> fetchOpenRouterModels(trimmedKey)
+                ProviderType.DEEPSEEK -> fetchDeepSeekModels(trimmedKey)
+                ProviderType.CLAUDE -> fetchClaudeModels(trimmedKey)
+                ProviderType.OPENAI -> fetchOpenAiModels(trimmedKey)
+                ProviderType.GROK -> fetchGrokModels(trimmedKey)
+                ProviderType.MISTRAL -> fetchMistralModels(trimmedKey)
+                ProviderType.HUGGINGFACE -> fetchHuggingFaceModels(trimmedKey)
             }
-        } catch (_: Exception) {
-            provider.suggestedModels
+        } catch (e: Exception) {
+            val fallback = provider.suggestedModels.map {
+                AiModelInfo(
+                    id = it,
+                    displayName = it,
+                    isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
+                    isRecommended = true
+                )
+            }
+            FetchModelsResponse(
+                isSuccess = false,
+                models = fallback,
+                errorMessage = "שגיאת רשת בשליפת מודלים: ${e.localizedMessage ?: "לא ניתן להתחבר לשרת"}. מוצגים מודלים מומלצים כגיבוי."
+            )
+        }
+    }
+
+    private fun fetchGeminiModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = when (resp.code) {
+                    400 -> "מפתח Gemini אינו תקין (Error 400)"
+                    403 -> "המפתח חסום או שאין הרשאה לפרויקט ב-Gemini (Error 403)"
+                    429 -> "חרגת ממכסת הבקשות של Gemini (Error 429)"
+                    else -> "שגיאה ב-Gemini (${resp.code})"
+                }
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.GEMINI.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("models") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val rawName = obj.optString("name", "")
+                val id = rawName.removePrefix("models/")
+                val supportedMethods = obj.optJSONArray("supportedGenerationMethods")
+                var supportsGenerate = false
+                if (supportedMethods != null) {
+                    for (j in 0 until supportedMethods.length()) {
+                        if (supportedMethods.optString(j) == "generateContent") {
+                            supportsGenerate = true
+                            break
+                        }
+                    }
+                }
+                if (!supportsGenerate) continue
+                if (!id.startsWith("gemini", ignoreCase = true)) continue
+                if (id.contains("vision", ignoreCase = true) || id.contains("embedding", ignoreCase = true) || id.contains("aqa", ignoreCase = true)) continue
+
+                val dispName = obj.optString("displayName", id)
+                val desc = obj.optString("description", "")
+                val isRec = id in listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro")
+                list.add(
+                    AiModelInfo(
+                        id = id,
+                        displayName = dispName,
+                        isFree = true,
+                        description = desc.take(120),
+                        isRecommended = isRec
+                    )
+                )
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenByDescending { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GEMINI.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) })
+        }
+    }
+
+    private fun fetchGroqModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.groq.com/openai/v1/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח Groq אינו תקין (401 Unauthorized)" else "שגיאת שרת Groq (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.GROQ.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            val excluded = listOf("whisper", "tts", "embedding", "guard", "safeguard", "moderation", "distil-whisper")
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                val active = obj.optBoolean("active", true)
+                if (!active || id.isBlank()) continue
+                if (excluded.any { id.contains(it, ignoreCase = true) }) continue
+
+                val ctx = obj.optInt("context_window", 0).takeIf { it > 0 }
+                val isRec = id in listOf("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "meta-llama/llama-4-scout-17b-16e-instruct", "llama-3.1-8b-instant", "qwen-qwq-32b")
+                list.add(
+                    AiModelInfo(
+                        id = id,
+                        displayName = id,
+                        isFree = true,
+                        contextWindow = ctx,
+                        isRecommended = isRec
+                    )
+                )
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GROQ.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) })
+        }
+    }
+
+    private fun fetchOpenRouterModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://openrouter.ai/api/v1/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) },
+                    errorMessage = "שגיאה ב-OpenRouter (${resp.code})"
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            val excluded = listOf("whisper", "tts", "embedding", "moderation")
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                if (id.isBlank() || excluded.any { id.contains(it, ignoreCase = true) }) continue
+
+                val name = obj.optString("name", id)
+                val pricing = obj.optJSONObject("pricing")
+                val pPrompt = pricing?.optString("prompt", "0") ?: "0"
+                val pCompl = pricing?.optString("completion", "0") ?: "0"
+                val isFree = id.endsWith(":free") || (pPrompt == "0" && pCompl == "0")
+                val ctx = obj.optInt("context_length", 0).takeIf { it > 0 }
+                val desc = obj.optString("description", "")
+
+                val disp = if (isFree && !name.contains("free", ignoreCase = true)) "$name (חינמי)" else name
+                val isRec = isFree || id in listOf("anthropic/claude-3.5-sonnet", "openai/gpt-4o", "deepseek/deepseek-chat")
+
+                list.add(
+                    AiModelInfo(
+                        id = id,
+                        displayName = disp,
+                        isFree = isFree,
+                        contextWindow = ctx,
+                        description = desc.take(120),
+                        isRecommended = isRec
+                    )
+                )
+            }
+            // Sort: Free models first, then recommended, then alphabetical
+            list.sortWith(compareByDescending<AiModelInfo> { it.isFree }.thenByDescending { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list.take(80) else ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) })
+        }
+    }
+
+    private fun fetchDeepSeekModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.deepseek.com/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח DeepSeek אינו תקין (401)" else "שגיאה ב-DeepSeek (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.DEEPSEEK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val id = arr.getJSONObject(i).optString("id", "")
+                if (id.isNotBlank()) {
+                    list.add(AiModelInfo(id = id, displayName = id, isRecommended = true))
+                }
+            }
+            if (list.isEmpty()) {
+                list.addAll(ProviderType.DEEPSEEK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            }
+            return FetchModelsResponse(isSuccess = true, models = list)
+        }
+    }
+
+    private fun fetchClaudeModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.anthropic.com/v1/models")
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", "2023-06-01")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח Anthropic Claude שגוי או לא מורשה (401)" else "שגיאה ב-Claude (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.CLAUDE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val id = obj.optString("id", "")
+                val disp = obj.optString("display_name", id)
+                if (id.isNotBlank()) {
+                    val isRec = id.contains("sonnet", ignoreCase = true) || id.contains("haiku", ignoreCase = true)
+                    list.add(AiModelInfo(id = id, displayName = disp, isRecommended = isRec))
+                }
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.CLAUDE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+        }
+    }
+
+    private fun fetchOpenAiModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.openai.com/v1/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח OpenAI שגוי או שאין הרשאה (401)" else "שגיאה ב-OpenAI (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.OPENAI.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            val excluded = listOf("whisper", "tts", "embedding", "dall-e", "babbage", "davinci", "moderation", "realtime", "audio", "instruct", "canary")
+            for (i in 0 until arr.length()) {
+                val id = arr.getJSONObject(i).optString("id", "")
+                if (id.isBlank()) continue
+                if (excluded.any { id.contains(it, ignoreCase = true) }) continue
+                val isChat = id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("chatgpt-")
+                if (!isChat) continue
+
+                val isRec = id in listOf("gpt-4o-mini", "gpt-4o", "o3-mini", "o1-mini")
+                list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.OPENAI.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+        }
+    }
+
+    private fun fetchGrokModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.x.ai/v1/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח xAI Grok שגוי (401)" else "שגיאה ב-Grok (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.GROK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val id = arr.getJSONObject(i).optString("id", "")
+                if (id.isNotBlank() && !id.contains("embedding", ignoreCase = true)) {
+                    val isRec = id.startsWith("grok-3") || id.startsWith("grok-2")
+                    list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
+                }
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GROK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+        }
+    }
+
+    private fun fetchMistralModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://api.mistral.ai/v1/models")
+            .addHeader("Authorization", "Bearer $apiKey")
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                val msg = if (resp.code == 401) "מפתח Mistral אינו תקין (401)" else "שגיאה ב-Mistral (${resp.code})"
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.MISTRAL.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = msg
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val id = arr.getJSONObject(i).optString("id", "")
+                if (id.isNotBlank() && !id.contains("embed", ignoreCase = true)) {
+                    val isRec = id in listOf("mistral-large-latest", "codestral-latest", "mistral-small-latest")
+                    list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
+                }
+            }
+            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.MISTRAL.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+        }
+    }
+
+    private fun fetchHuggingFaceModels(apiKey: String): FetchModelsResponse {
+        val req = Request.Builder()
+            .url("https://huggingface.co/api/models?pipeline_tag=text-generation&sort=trending&limit=30")
+            .apply {
+                if (apiKey.isNotBlank()) addHeader("Authorization", "Bearer $apiKey")
+            }
+            .get()
+            .build()
+        httpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = "שגיאה ב-Hugging Face (${resp.code})"
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val arr = JSONArray(body)
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val id = arr.getJSONObject(i).optString("id", "")
+                if (id.isNotBlank()) {
+                    list.add(AiModelInfo(id = id, displayName = id, isRecommended = i < 5))
+                }
+            }
+            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
         }
     }
 
@@ -388,6 +722,8 @@ class AiApiClient {
             ProviderType.GROK -> "https://api.x.ai/v1/chat/completions"
             ProviderType.OPENAI -> "https://api.openai.com/v1/chat/completions"
             ProviderType.OPENROUTER -> "https://openrouter.ai/api/v1/chat/completions"
+            ProviderType.DEEPSEEK -> "https://api.deepseek.com/chat/completions"
+            ProviderType.MISTRAL -> "https://api.mistral.ai/v1/chat/completions"
             ProviderType.HUGGINGFACE -> "https://router.huggingface.co/hf-inference/v1/chat/completions"
             else -> "https://api.openai.com/v1/chat/completions"
         }
