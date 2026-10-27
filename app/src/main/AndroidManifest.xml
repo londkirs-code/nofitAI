@@ -10,6 +10,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".NotifAiApplication"
@@ -48,6 +55,16 @@
             android:label="NotifAI • שיחה"
             android:theme="@style/Theme.NotifAi.Dialog"
             android:taskAffinity="com.aistudio.notifai.dialog"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ui.AttachContentDialogActivity"
+            android:exported="false"
+            android:label="NotifAI • שלח תוכן"
+            android:theme="@style/Theme.NotifAi.Dialog"
+            android:taskAffinity="com.aistudio.notifai.attach"
             android:excludeFromRecents="true"
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" />

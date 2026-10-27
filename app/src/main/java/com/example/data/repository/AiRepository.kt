@@ -346,6 +346,13 @@ class AiRepository(
                     file.name.endsWith(".jpg", true) || file.name.endsWith(".jpeg", true) -> "image/jpeg"
                     file.name.endsWith(".png", true) -> "image/png"
                     file.name.endsWith(".webp", true) -> "image/webp"
+                    file.name.endsWith(".m4a", true) -> "audio/mp4"
+                    file.name.endsWith(".aac", true) -> "audio/aac"
+                    file.name.endsWith(".mp3", true) -> "audio/mpeg"
+                    file.name.endsWith(".wav", true) -> "audio/wav"
+                    file.name.endsWith(".ogg", true) -> "audio/ogg"
+                    file.name.endsWith(".pdf", true) -> "application/pdf"
+                    file.name.endsWith(".txt", true) -> "text/plain"
                     else -> "application/octet-stream"
                 }
                 return AttachmentData(

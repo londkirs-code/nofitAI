@@ -23,6 +23,7 @@ import com.example.NotifAiApplication
 import com.example.R
 import com.example.data.repository.QueryResult
 import com.example.receiver.NotificationActionReceiver
+import com.example.ui.AttachContentDialogActivity
 import com.example.ui.ChatDialogActivity
 import com.example.ui.FullResponseActivity
 import com.example.ui.ScreenCaptureActivity
@@ -109,12 +110,26 @@ class NotificationChatService : Service() {
 
     private fun processIncomingQuery(query: String, attachmentUri: Uri?) {
         val userTimestamp = System.currentTimeMillis()
-        val displayUserText = if (attachmentUri != null && query.isBlank()) {
-            "📎 [קובץ מצורף]"
-        } else if (attachmentUri != null) {
-            "📎 [קובץ] $query"
-        } else {
-            query
+        val uriStr = attachmentUri?.toString()?.lowercase().orEmpty()
+        val isAudio = attachmentUri != null && (
+            uriStr.endsWith(".m4a") || uriStr.endsWith(".aac") ||
+            uriStr.endsWith(".mp3") || uriStr.endsWith(".wav") ||
+            uriStr.endsWith(".ogg") || uriStr.contains("audio")
+        )
+        val isImage = attachmentUri != null && (
+            uriStr.endsWith(".jpg") || uriStr.endsWith(".jpeg") ||
+            uriStr.endsWith(".png") || uriStr.endsWith(".webp") ||
+            uriStr.contains("image")
+        )
+
+        val displayUserText = when {
+            isAudio && query.isBlank() -> "🎙️ [הקלטה קולית]"
+            isAudio -> "🎙️ [הקלטה] $query"
+            isImage && query.isBlank() -> "📸 [צילום מסך / תמונה]"
+            isImage -> "📸 [תמונה] $query"
+            attachmentUri != null && query.isBlank() -> "📎 [קובץ מצורף]"
+            attachmentUri != null -> "📎 [קובץ] $query"
+            else -> query
         }
 
         synchronized(chatHistory) {
@@ -134,8 +149,13 @@ class NotificationChatService : Service() {
         serviceScope.launch {
             val repository = (application as NotifAiApplication).aiRepository
             try {
+                val fallbackPrompt = when {
+                    isAudio -> "אנא האזן להקלטה הקולית המצורפת והשב על דברי המשתמש."
+                    isImage -> "אנא נתח את צילום המסך או התמונה המצורפת."
+                    else -> "אנא נתח את הקובץ המצורף"
+                }
                 val result: QueryResult = repository.askAi(
-                    prompt = query.ifBlank { "אנא נתח את הקובץ המצורף" },
+                    prompt = query.ifBlank { fallbackPrompt },
                     attachmentUri = attachmentUri
                 )
 
@@ -278,21 +298,20 @@ class NotificationChatService : Service() {
             chatDialogPendingIntent
         ).build()
 
-        // Attach File Action
-        val attachIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            putExtra(MainActivity.EXTRA_OPEN_ATTACHMENT_PICKER, true)
+        // Attach Content Dialog Action (Screenshot, Voice Record, Hebrew STT, File Upload)
+        val attachDialogIntent = Intent(this, AttachContentDialogActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val attachPendingIntent = PendingIntent.getActivity(
+        val attachDialogPendingIntent = PendingIntent.getActivity(
             this,
             104,
-            attachIntent,
+            attachDialogIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val attachAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_upload,
-            "📎 צרף קובץ",
-            attachPendingIntent
+        val sendContentAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_input_add,
+            "✨ שלח תוכן",
+            attachDialogPendingIntent
         ).build()
 
         // New Chat Action
@@ -349,10 +368,10 @@ class NotificationChatService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setColor(Color.parseColor("#38BDF8"))
             .addAction(replyAction)
+            .addAction(sendContentAction)
+            .addAction(fullViewAction)
             .addAction(screenshotAction)
             .addAction(copyAction)
-            .addAction(fullViewAction)
-            .addAction(attachAction)
             .addAction(newChatAction)
             .build()
     }

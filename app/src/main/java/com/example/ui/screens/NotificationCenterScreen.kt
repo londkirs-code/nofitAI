@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import com.example.ui.AttachContentDialogActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -472,7 +474,22 @@ fun NotificationCenterScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = {
+                        val attachIntent = Intent(context, AttachContentDialogActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(attachIntent)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("open_attach_content_dialog_btn")
+                ) {
+                    Text("✨ חלונית 'שלח תוכן' (הקלטה • דיבור בעברית • קבצים)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
 
                 // Conversational Memory & Recall Actions
                 Row(

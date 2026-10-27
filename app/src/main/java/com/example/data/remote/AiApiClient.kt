@@ -562,7 +562,7 @@ class AiApiClient {
         userContent.put("role", "user")
 
         val partsArray = JSONArray()
-        if (attachment != null && attachment.mimeType.startsWith("image/")) {
+        if (attachment != null && (attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("audio/"))) {
             val inlineData = JSONObject()
             inlineData.put("mimeType", attachment.mimeType)
             inlineData.put("data", Base64.encodeToString(attachment.bytes, Base64.NO_WRAP))
