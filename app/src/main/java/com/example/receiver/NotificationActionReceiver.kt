@@ -20,13 +20,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
             }
             ACTION_COPY_RESPONSE -> {
-                NotificationChatService.copyLatestResponse(context)
+                val textToCopy = intent.getStringExtra(EXTRA_RESPONSE_TEXT) ?: NotificationChatService.latestFullResponse
+                NotificationChatService.copyText(context, textToCopy)
             }
-            ACTION_NEW_CHAT -> {
+            ACTION_NEW_CHAT, ACTION_CLEAR_ALL_NOTIFICATIONS -> {
                 val serviceIntent = Intent(context, NotificationChatService::class.java).apply {
                     action = NotificationChatService.ACTION_CLEAR_CHAT
                 }
                 context.startService(serviceIntent)
+            }
+            ACTION_DISMISS_NOTIFICATION -> {
+                val notifId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+                if (notifId != -1) {
+                    NotificationChatService.dismissResponseNotification(context, notifId)
+                }
             }
             ACTION_SCREENSHOT -> {
                 val accessibilityService = com.example.service.FastScreenCaptureAccessibilityService.instance
@@ -46,6 +53,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_DIRECT_REPLY = "com.example.notifai.ACTION_DIRECT_REPLY"
         const val ACTION_COPY_RESPONSE = "com.example.notifai.ACTION_COPY_RESPONSE"
         const val ACTION_NEW_CHAT = "com.example.notifai.ACTION_NEW_CHAT"
+        const val ACTION_CLEAR_ALL_NOTIFICATIONS = "com.example.notifai.ACTION_CLEAR_ALL_NOTIFICATIONS"
+        const val ACTION_DISMISS_NOTIFICATION = "com.example.notifai.ACTION_DISMISS_NOTIFICATION"
         const val ACTION_SCREENSHOT = "com.example.notifai.ACTION_SCREENSHOT"
+        const val EXTRA_NOTIFICATION_ID = "extra_notification_id"
+        const val EXTRA_RESPONSE_TEXT = "extra_response_text"
     }
 }
