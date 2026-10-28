@@ -1,16 +1,27 @@
 package com.example.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,35 +30,46 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,51 +78,65 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.AiTaskType
 import com.example.data.model.ApiKeyEntity
+import com.example.data.model.ProviderType
 import com.example.data.repository.AiRepository
+import com.example.ui.components.CenteredMenuOption
+import com.example.ui.components.CenteredSelectionMenuDialog
+import com.example.ui.components.DragHandleBadge
+import com.example.ui.components.DraggableReorderColumn
 import com.example.ui.dialogs.AddKeyDialog
 import com.example.ui.viewmodel.NotifAiViewModel
 import com.example.util.AppStrings
+import com.example.util.ParsedImportKeyItem
+import com.example.util.SmartKeyImporter
+import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ApiKeysScreen(
     viewModel: NotifAiViewModel,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val apiKeys by viewModel.apiKeys.collectAsState()
 
     var showAddKeyDialog by remember { mutableStateOf(false) }
     var keyToEdit by remember { mutableStateOf<ApiKeyEntity?>(null) }
     var showTaskRoutingSection by remember { mutableStateOf(false) }
     var routingRefreshTick by remember { mutableStateOf(0) }
+    var showDeleteAllConfirmDialog by remember { mutableStateOf(false) }
+    var showBulkKeysDialog by remember { mutableStateOf(false) }
 
     val sortedKeys = remember(apiKeys) { apiKeys.sortedBy { it.priority } }
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         // Top header with Add button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 12.dp),
+                .padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = AppStrings.tr("סדרי עדיפויות, משימות ומפתחות"),
+                    text = AppStrings.tr("סדרי עדיפויות, משימות ומפתחות", "Priorities, Tasks & API Keys"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = AppStrings.tr(
-                        "${apiKeys.size} מפתחות מוגדרים • תמיכה בשכפול מהיר, גיבוי מודלים והתאמה אישית",
-                        "${apiKeys.size} keys configured • Quick duplicate, fallback models & custom routing"
+                        "${apiKeys.size} מפתחות מוגדרים • גרירה לשינוי סדר, זיהוי אוטומטי וייבוא חכם",
+                        "${apiKeys.size} keys configured • Drag to reorder, auto-detect & smart bulk import"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -121,7 +157,57 @@ fun ApiKeysScreen(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(AppStrings.tr("הוסף מפתח"), fontWeight = FontWeight.Bold)
+                Text(AppStrings.tr("הוסף מפתח", "Add Key"), fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Action Bar: Smart Bulk Import/Backup + Delete All Saved Keys
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilledTonalButton(
+                onClick = { showBulkKeysDialog = true },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("bulk_import_export_keys_btn"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = AppStrings.tr("ייבוא / גיבוי רשימת מפתחות (JSON / TXT / הדבקה)", "Bulk Import / Backup (JSON / TXT / Paste)"),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (sortedKeys.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = { showDeleteAllConfirmDialog = true },
+                    modifier = Modifier.testTag("delete_all_keys_btn"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.DeleteForever,
+                        contentDescription = AppStrings.tr("מחק את כל המפתחות", "Delete all keys"),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = AppStrings.tr("מחק הכל", "Delete All"),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -143,12 +229,12 @@ fun ApiKeysScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = AppStrings.tr("ניתוב מפתח ומודל לפי סוג בקשה"),
+                                text = AppStrings.tr("ניתוב מפתח ומודל לפי סוג בקשה", "Key & Model Routing by Request Type"),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = AppStrings.tr("בחר מפתח ייעודי לכל סוג משימה (או אוטומטי לפי עדיפות):"),
+                                text = AppStrings.tr("בחר מפתח ייעודי לכל סוג משימה (או אוטומטי לפי עדיפות):", "Choose a dedicated key per task type (or Auto by priority):"),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp
@@ -157,7 +243,7 @@ fun ApiKeysScreen(
                         OutlinedButton(
                             onClick = { showTaskRoutingSection = !showTaskRoutingSection },
                             modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = if (showTaskRoutingSection) AppStrings.tr("הסתר", "Hide") else AppStrings.tr("הגדר לפי סוג", "Configure"),
@@ -203,7 +289,7 @@ fun ApiKeysScreen(
                                         color = if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                                     ) {
                                         Text(
-                                            text = AppStrings.tr("אוטומטי (לפי עדיפות)"),
+                                            text = AppStrings.tr("אוטומטי (לפי עדיפות)", "Auto (By Priority)"),
                                             fontSize = 10.sp,
                                             fontWeight = if (isAuto) FontWeight.Bold else FontWeight.Normal,
                                             color = if (isAuto) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
@@ -242,32 +328,128 @@ fun ApiKeysScreen(
                 onAddClick = {
                     keyToEdit = null
                     showAddKeyDialog = true
+                },
+                onBulkImportClick = {
+                    showBulkKeysDialog = true
                 }
             )
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                itemsIndexed(sortedKeys, key = { _, item -> item.id }) { index, key ->
-                    KeyPriorityCard(
-                        keyEntity = key,
-                        isFirst = index == 0,
-                        isLast = index == sortedKeys.size - 1,
-                        onMoveUp = { viewModel.movePriorityUp(index) },
-                        onMoveDown = { viewModel.movePriorityDown(index) },
-                        onToggle = { viewModel.toggleKeyEnabled(key) },
-                        onDuplicate = { viewModel.duplicateKey(key) },
-                        onClearSuspension = { viewModel.clearSuspension(key) },
-                        onEdit = {
-                            keyToEdit = key
-                            showAddKeyDialog = true
-                        },
-                        onDelete = { viewModel.deleteKey(key) }
-                    )
-                }
+            Text(
+                text = AppStrings.tr(
+                    "💡 גרור כרטיס מפתח למעלה או למטה כדי לשנות את סדר הקדימיות והגיבוי האוטומטי:",
+                    "💡 Drag any key card up or down to change its priority and fallback order:"
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            DraggableReorderColumn(
+                items = sortedKeys,
+                keySelector = { it.id },
+                onReorderFinished = { newOrder ->
+                    viewModel.reorderKeys(newOrder.map { it.id })
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { index, key, isDragging, dragHandleModifier ->
+                KeyPriorityCard(
+                    keyEntity = key,
+                    isFirst = index == 0,
+                    isDragging = isDragging,
+                    dragHandleModifier = dragHandleModifier,
+                    onToggle = { viewModel.toggleKeyEnabled(key) },
+                    onDuplicate = { viewModel.duplicateKey(key) },
+                    onClearSuspension = { viewModel.clearSuspension(key) },
+                    onEdit = {
+                        keyToEdit = key
+                        showAddKeyDialog = true
+                    },
+                    onDelete = { viewModel.deleteKey(key) }
+                )
             }
         }
+    }
+
+    // Delete All Keys Confirmation Dialog (Centered & Padded)
+    if (showDeleteAllConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllConfirmDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .padding(16.dp),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = AppStrings.tr("מחיקת כל המפתחות השמורים", "Delete All Saved Keys"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = AppStrings.tr(
+                        "האם אתה בטוח שברצונך למחוק את כל ${sortedKeys.size} המפתחות השמורים? פעולה זו תנקה את כל המפתחות מהאחסון המוצפן ולא ניתן לבטלה (מומלץ לבצע גיבוי לפני כן).",
+                        "Are you sure you want to delete all ${sortedKeys.size} saved keys? This will wipe all keys from encrypted storage and cannot be undone."
+                    ),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteAllKeys()
+                        showDeleteAllConfirmDialog = false
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr("כל המפתחות השמורים נמחקו בהצלחה 🗑️", "All saved keys deleted 🗑️"),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_all_keys_btn")
+                ) {
+                    Text(AppStrings.tr("כן, מחק את כל המפתחות", "Yes, Delete All Keys"), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllConfirmDialog = false }) {
+                    Text(AppStrings.tr("ביטול", "Cancel"))
+                }
+            }
+        )
+    }
+
+    // Smart Bulk Import / Backup Dialog (.json, .txt, and Clipboard Paste)
+    if (showBulkKeysDialog) {
+        SmartBulkKeysDialog(
+            existingKeysCount = sortedKeys.size,
+            onDismiss = { showBulkKeysDialog = false },
+            onImportKeys = { items ->
+                viewModel.importParsedKeys(items) { importedCount ->
+                    Toast.makeText(
+                        context,
+                        AppStrings.tr(
+                            "יובאו בהצלחה $importedCount מפתחות עם שיוך ספק ומודל מועדף! 🎉",
+                            "Successfully imported $importedCount keys with provider & preferred model! 🎉"
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                showBulkKeysDialog = false
+            },
+            onExportJson = { onResult ->
+                scope.launch {
+                    onResult(viewModel.exportKeysAsJson())
+                }
+            },
+            onExportTxt = { onResult ->
+                scope.launch {
+                    onResult(viewModel.exportKeysAsTxt())
+                }
+            }
+        )
     }
 
     if (showAddKeyDialog) {
@@ -311,9 +493,8 @@ fun ApiKeysScreen(
 fun KeyPriorityCard(
     keyEntity: ApiKeyEntity,
     isFirst: Boolean,
-    isLast: Boolean,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
+    isDragging: Boolean = false,
+    dragHandleModifier: Modifier = Modifier,
     onToggle: () -> Unit,
     onDuplicate: () -> Unit,
     onClearSuspension: () -> Unit,
@@ -334,13 +515,17 @@ fun KeyPriorityCard(
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = if (isDragging) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            }
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 8.dp else 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Header Row: Priority Badge, Name, Enable Switch
+            // Header Row: Drag Handle, Priority Badge, Name, Enable Switch
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -350,6 +535,12 @@ fun KeyPriorityCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
+                    DragHandleBadge(
+                        priorityNumber = keyEntity.priority,
+                        isDragging = isDragging,
+                        dragHandleModifier = dragHandleModifier
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Surface(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         shape = RoundedCornerShape(8.dp)
@@ -377,7 +568,10 @@ fun KeyPriorityCard(
                         )
                         if (candidateModels.size > 1) {
                             Text(
-                                text = "גיבוי אוטומטי במפתח: ${candidateModels.drop(1).joinToString(" ← ")}",
+                                text = AppStrings.tr(
+                                    "גיבוי אוטומטי במפתח: ${candidateModels.drop(1).joinToString(" ← ")}",
+                                    "Fallback chain: ${candidateModels.drop(1).joinToString(" → ")}"
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -412,7 +606,7 @@ fun KeyPriorityCard(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = "${task.emoji} ${task.titleHe}",
+                            text = "${task.emoji} ${AppStrings.tr(task.titleHe, task.name)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
@@ -469,7 +663,7 @@ fun KeyPriorityCard(
                         ) {
                             Icon(
                                 Icons.Default.Refresh,
-                                contentDescription = "אפס השהייה",
+                                contentDescription = AppStrings.tr("אפס השהייה", "Clear suspension"),
                                 tint = MaterialTheme.colorScheme.onTertiaryContainer,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -519,15 +713,15 @@ fun KeyPriorityCard(
                             .height(30.dp)
                             .testTag("duplicate_key_btn_${keyEntity.id}"),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Icon(
                             Icons.Default.ContentCopy,
-                            contentDescription = AppStrings.tr("שכפל מפתח"),
+                            contentDescription = AppStrings.tr("שכפל מפתח", "Duplicate key"),
                             modifier = Modifier.size(13.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(AppStrings.tr("שכפל מפתח"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(AppStrings.tr("שכפל מפתח", "Duplicate"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     IconButton(
@@ -550,9 +744,8 @@ fun KeyPriorityCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // Reordering priority buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -560,7 +753,7 @@ fun KeyPriorityCard(
             ) {
                 Text(
                     text = if (isFirst) {
-                        AppStrings.tr("קדימות ראשית במענה (#1)", "Primary Priority (#1)")
+                        AppStrings.tr("⭐ קדימות ראשית במענה (#1)", "⭐ Primary Priority (#1)")
                     } else {
                         AppStrings.tr("גיבוי בעדיפות #${keyEntity.priority}", "Fallback Priority #${keyEntity.priority}")
                     },
@@ -568,35 +761,399 @@ fun KeyPriorityCard(
                     color = if (isFirst) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold
                 )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FilledTonalButton(
-                        onClick = onMoveUp,
-                        enabled = !isFirst,
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(Icons.Default.ArrowUpward, contentDescription = AppStrings.tr("העלה"), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(AppStrings.tr("העלה"), fontSize = 11.sp)
-                    }
-
-                    FilledTonalButton(
-                        onClick = onMoveDown,
-                        enabled = !isLast,
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(Icons.Default.ArrowDownward, contentDescription = AppStrings.tr("הורד"), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(AppStrings.tr("הורד"), fontSize = 11.sp)
-                    }
-                }
+                Text(
+                    text = AppStrings.tr("☰ החזק וגרור לשינוי מיקום", "☰ Hold & drag to reorder"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }
 }
 
 @Composable
-fun EmptyKeysPlaceholder(onAddClick: () -> Unit) {
+fun SmartBulkKeysDialog(
+    existingKeysCount: Int,
+    onDismiss: () -> Unit,
+    onImportKeys: (List<ParsedImportKeyItem>) -> Unit,
+    onExportJson: ((String) -> Unit) -> Unit,
+    onExportTxt: ((String) -> Unit) -> Unit
+) {
+    val context = LocalContext.current
+    var rawInputText by remember { mutableStateOf("") }
+    var parsedItems by remember { mutableStateOf<List<ParsedImportKeyItem>>(emptyList()) }
+    var itemIndexChangingProvider by remember { mutableStateOf<Int?>(null) }
+    var pendingSaveContent by remember { mutableStateOf<String?>(null) }
+
+    fun recomputeParsed(text: String) {
+        rawInputText = text
+        parsedItems = SmartKeyImporter.parseKeysFromContent(text)
+    }
+
+    val openFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                if (text.isNotBlank()) {
+                    recomputeParsed(text)
+                }
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("שגיאה בקריאת הקובץ: ${e.localizedMessage}", "Error reading file: ${e.localizedMessage}"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    val createDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val content = pendingSaveContent
+        if (uri != null && content != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(content) }
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("הקובץ נשמר בהצלחה! 💾", "File saved successfully! 💾"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("שגיאה בשמירת הקובץ", "Error saving file"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier
+            .fillMaxWidth(0.95f)
+            .padding(vertical = 14.dp),
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Column {
+                Text(
+                    text = AppStrings.tr("ייבוא וגיבוי חכם של רשימת מפתחות", "Smart Bulk Key Import & Backup"),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = AppStrings.tr(
+                        "תומך בקובצי JSON, TXT והדבקת כמות מהלוח • מזהה אוטומטית ספק ומודל מועדף",
+                        "Supports JSON, TXT & bulk clipboard paste • Auto-detects provider & preferred model"
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Export / Backup section if keys exist
+                if (existingKeysCount > 0) {
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = AppStrings.tr(
+                                    "💾 גיבוי / ייצוא $existingKeysCount המפתחות השמורים:",
+                                    "💾 Backup / Export $existingKeysCount Saved Keys:"
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        onExportJson { json ->
+                                            pendingSaveContent = json
+                                            createDocumentLauncher.launch("notifai_keys_backup.json")
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(AppStrings.tr("שמור JSON", "Save JSON"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        onExportTxt { txt ->
+                                            pendingSaveContent = txt
+                                            createDocumentLauncher.launch("notifai_keys_backup.txt")
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(AppStrings.tr("שמור TXT", "Save TXT"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        onExportTxt { txt ->
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("NotifAI Keys Backup", txt))
+                                            Toast.makeText(
+                                                context,
+                                                AppStrings.tr("כל המפתחות הועתקו ללוח! 📋", "All keys copied to clipboard! 📋"),
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(AppStrings.tr("העתק הכל", "Copy All"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Import Source Buttons: Load File (.json / .txt) or Paste from Clipboard
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = { openFileLauncher.launch("*/*") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(AppStrings.tr("בחר קובץ JSON / TXT", "Pick JSON / TXT File"), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clipText = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                            if (clipText.isNotBlank()) {
+                                val combined = if (rawInputText.isBlank()) clipText else "$rawInputText\n$clipText"
+                                recomputeParsed(combined)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    AppStrings.tr("הלוח ריק", "Clipboard is empty"),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(AppStrings.tr("הדבק מהלוח", "Paste Clipboard"), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = rawInputText,
+                    onValueChange = { recomputeParsed(it) },
+                    label = {
+                        Text(
+                            AppStrings.tr(
+                                "הדבק כאן רשימת מפתחות, טקסט חופשי או תוכן JSON / TXT...",
+                                "Paste key list, free text, or JSON / TXT content here..."
+                            )
+                        )
+                    },
+                    placeholder = {
+                        Text(
+                            "AIzaSy... gemini-2.5-flash\nsk-or-v1-... deepseek/deepseek-r1:free\ngsk_...",
+                            fontSize = 11.sp
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 110.dp, max = 160.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    maxLines = 8
+                )
+
+                // Detected Keys Preview with manual Provider & Preferred Model override
+                if (parsedItems.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AutoFixHigh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = AppStrings.tr(
+                                    "זוהו אוטומטית ${parsedItems.size} מפתחות (ניתן לשנות ספק ומודל ידנית):",
+                                    "Auto-detected ${parsedItems.size} keys (tap to change provider or model):"
+                                ),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        parsedItems.forEachIndexed { index, item ->
+                            val labelStr = if (item.wasModelAutoDetectedFromFile) {
+                                AppStrings.tr("⭐ מודל מועדף שזוהה מהקובץ/טקסט", "⭐ Preferred model detected")
+                            } else {
+                                AppStrings.tr("מודל ברירת מחדל (ניתן לערוך)", "Default model (editable)")
+                            }
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "#${index + 1} • ${item.rawKey.take(10)}...${item.rawKey.takeLast(4)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        OutlinedButton(
+                                            onClick = { itemIndexChangingProvider = index },
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.height(28.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${item.provider.displayName.substringBefore(" ")} ▾",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    OutlinedTextField(
+                                        value = item.preferredModel,
+                                        onValueChange = { newModel ->
+                                            parsedItems = parsedItems.toMutableList().also { list ->
+                                                list[index] = item.copy(preferredModel = newModel.trim())
+                                            }
+                                        },
+                                        label = {
+                                            Text(labelStr, fontSize = 10.sp)
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onImportKeys(parsedItems) },
+                enabled = parsedItems.isNotEmpty(),
+                modifier = Modifier.testTag("confirm_bulk_import_btn")
+            ) {
+                Text(
+                    text = AppStrings.tr(
+                        "ייבא ${parsedItems.size} מפתחות עכשיו",
+                        "Import ${parsedItems.size} Keys Now"
+                    ),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(AppStrings.tr("סגור", "Close"))
+            }
+        }
+    )
+
+    val changingIdx = itemIndexChangingProvider
+    if (changingIdx != null && changingIdx in parsedItems.indices) {
+        val currentItem = parsedItems[changingIdx]
+        val providerOptions = remember {
+            ProviderType.entries.map { p ->
+                CenteredMenuOption(
+                    value = p,
+                    title = p.displayName,
+                    subtitle = "${AppStrings.tr("מודל מומלץ:", "Default:")} ${p.defaultModel}"
+                )
+            }
+        }
+        CenteredSelectionMenuDialog(
+            title = AppStrings.tr("שינוי ידני של ספק ה-API למפתח #${changingIdx + 1}", "Select API Provider for Key #${changingIdx + 1}"),
+            subtitle = "${currentItem.rawKey.take(12)}...",
+            options = providerOptions,
+            selectedValue = currentItem.provider,
+            onSelect = { newProvider ->
+                parsedItems = parsedItems.toMutableList().also { list ->
+                    list[changingIdx] = currentItem.copy(
+                        provider = newProvider,
+                        preferredModel = if (currentItem.wasModelAutoDetectedFromFile) currentItem.preferredModel else newProvider.defaultModel
+                    )
+                }
+            },
+            onDismiss = { itemIndexChangingProvider = null }
+        )
+    }
+}
+
+@Composable
+fun EmptyKeysPlaceholder(
+    onAddClick: () -> Unit,
+    onBulkImportClick: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
@@ -625,27 +1182,36 @@ fun EmptyKeysPlaceholder(onAddClick: () -> Unit) {
                 )
             }
             Text(
-                text = AppStrings.tr("טרם הוגדרו מפתחות API"),
+                text = AppStrings.tr("טרם הוגדרו מפתחות API", "No API Keys Configured Yet"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 text = AppStrings.tr(
-                    he = "הוסף מפתח אחד או יותר מכל ספק (Gemini, Grok, Claude, OpenAI, OpenRouter, Hugging Face או שרת מותאם אישית). תוכל לשכפל מפתח בלחיצה, להגדיר מודלים שונים לטקסט, תמונה, סאונד, וידאו או קבצים, ולקבוע סדר גיבוי אוטומטי.",
-                    en = "Add one or more API keys from any provider (Gemini, Grok, Claude, OpenAI, OpenRouter, Hugging Face, or a Custom API). Duplicate keys in 1 tap, assign models for text, images, audio, video, or files, and set automatic fallback priority."
+                    he = "הוסף מפתח בודד או ייבא רשימת מפתחות מקובץ JSON / TXT או בהדבקה מהלוח. המערכת תזהה אוטומטית לאיזה ספק שייך כל מפתח ותסמן את המודל המועדף שלו.",
+                    en = "Add a single key or bulk import a list of keys from JSON / TXT or clipboard paste. The system automatically detects each key's provider and preferred model."
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Button(
-                onClick = onAddClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(AppStrings.tr("הוסף מפתח ראשון עכשיו"), fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = onAddClick,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(AppStrings.tr("הוסף מפתח", "Add Key"), fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(onClick = onBulkImportClick) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(AppStrings.tr("ייבוא רשימה", "Bulk Import"), fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

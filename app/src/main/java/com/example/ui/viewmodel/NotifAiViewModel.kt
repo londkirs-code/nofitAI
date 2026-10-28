@@ -194,6 +194,48 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun deleteAllKeys() {
+        viewModelScope.launch {
+            repository.deleteAllKeys()
+            Toast.makeText(
+                getApplication(),
+                com.example.util.AppStrings.tr("כל המפתחות השמורים נמחקו בהצלחה 🗑️", "All saved API keys deleted 🗑️"),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun reorderKeys(orderedIds: List<String>) {
+        viewModelScope.launch {
+            repository.reorderKeys(orderedIds)
+        }
+    }
+
+    fun importParsedKeys(items: List<com.example.util.ParsedImportKeyItem>, onComplete: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.importParsedKeys(items)
+            Toast.makeText(
+                getApplication(),
+                com.example.util.AppStrings.tr(
+                    "יובאו ונשמרו בהצלחה $count מפתחות מוצפנים! 🔒",
+                    "Successfully imported and encrypted $count API keys! 🔒"
+                ),
+                Toast.LENGTH_LONG
+            ).show()
+            onComplete(count)
+        }
+    }
+
+    suspend fun exportKeysAsJson(): String {
+        val pairs = repository.exportAllKeysWithPlain()
+        return com.example.util.SmartKeyImporter.exportKeysToJson(pairs)
+    }
+
+    suspend fun exportKeysAsTxt(): String {
+        val pairs = repository.exportAllKeysWithPlain()
+        return com.example.util.SmartKeyImporter.exportKeysToTxt(pairs)
+    }
+
     fun clearSuspension(entity: ApiKeyEntity) {
         viewModelScope.launch {
             repository.clearKeySuspension(entity.id)

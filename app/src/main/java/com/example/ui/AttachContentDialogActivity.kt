@@ -1043,8 +1043,9 @@ private fun ActionsPopupSection(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         val currentTick = taskRoutingRefreshTick
+                        var taskTypeForCenteredMenu by remember { mutableStateOf<AiTaskType?>(null) }
+
                         AiTaskType.entries.forEach { taskType ->
-                            var menuExpanded by remember { mutableStateOf(false) }
                             val assignedKeyId = remember(currentTick, allKeys) {
                                 AiRepository.getDedicatedKeyIdForTask(context, taskType)
                             }
@@ -1063,7 +1064,7 @@ private fun ActionsPopupSection(
                                 )
                                 Box(modifier = Modifier.weight(0.55f)) {
                                     OutlinedButton(
-                                        onClick = { menuExpanded = true },
+                                        onClick = { taskTypeForCenteredMenu = taskType },
                                         modifier = Modifier.fillMaxWidth(),
                                         shape = RoundedCornerShape(10.dp),
                                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
@@ -1080,37 +1081,48 @@ private fun ActionsPopupSection(
                                         )
                                         Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
                                     }
-                                    DropdownMenu(
-                                        expanded = menuExpanded,
-                                        onDismissRequest = { menuExpanded = false }
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text(AppStrings.tr("אוטומטי (לפי סדר עדיפויות)", "Auto (By Priority Order)")) },
-                                            onClick = {
-                                                AiRepository.setDedicatedKeyIdForTask(context, taskType, null)
-                                                taskRoutingRefreshTick++
-                                                menuExpanded = false
-                                            }
-                                        )
-                                        sortedKeys.forEach { k ->
-                                            DropdownMenuItem(
-                                                text = { Text("${k.name} • ${k.selectedModel}") },
-                                                onClick = {
-                                                    AiRepository.setDedicatedKeyIdForTask(context, taskType, k.id)
-                                                    scope.launch {
-                                                        val updatedTasks = k.parsedSupportedTasks + taskType
-                                                        repository.updateKeyEntity(
-                                                            k.copy(supportedTasks = AiTaskType.toCsv(updatedTasks), isEnabled = true)
-                                                        )
-                                                    }
-                                                    taskRoutingRefreshTick++
-                                                    menuExpanded = false
-                                                }
+                                }
+                            }
+                        }
+
+                        val activeTaskMenu = taskTypeForCenteredMenu
+                        if (activeTaskMenu != null) {
+                            val assignedKeyId = AiRepository.getDedicatedKeyIdForTask(context, activeTaskMenu)
+                            val currentSelection = sortedKeys.find { it.id == assignedKeyId }
+                            val menuOptions = listOf(
+                                com.example.ui.components.CenteredMenuOption<ApiKeyEntity?>(
+                                    value = null,
+                                    title = AppStrings.tr("⚡ אוטומטי (לפי סדר עדיפויות)", "⚡ Auto (By Priority Order)"),
+                                    subtitle = AppStrings.tr("ישתמש במפתח הפעיל הראשון שתומך במשימה", "Uses the first enabled key supporting this task")
+                                )
+                            ) + sortedKeys.map { k ->
+                                com.example.ui.components.CenteredMenuOption<ApiKeyEntity?>(
+                                    value = k,
+                                    title = "${k.name} • ${k.provider.displayName.substringBefore(" ")}",
+                                    subtitle = "${AppStrings.tr("מודל:", "Model:")} ${k.selectedModel}"
+                                )
+                            }
+                            com.example.ui.components.CenteredSelectionMenuDialog(
+                                title = "${activeTaskMenu.emoji} ${AppStrings.tr(activeTaskMenu.titleHe, activeTaskMenu.name)}",
+                                subtitle = AppStrings.tr("בחר מפתח ומודל ייעודיים עבור סוג בקשה זה", "Select dedicated key & model for this request type"),
+                                options = menuOptions,
+                                selectedValue = currentSelection,
+                                onSelect = { chosenKey ->
+                                    if (chosenKey == null) {
+                                        AiRepository.setDedicatedKeyIdForTask(context, activeTaskMenu, null)
+                                    } else {
+                                        AiRepository.setDedicatedKeyIdForTask(context, activeTaskMenu, chosenKey.id)
+                                        scope.launch {
+                                            val updatedTasks = chosenKey.parsedSupportedTasks + activeTaskMenu
+                                            repository.updateKeyEntity(
+                                                chosenKey.copy(supportedTasks = AiTaskType.toCsv(updatedTasks), isEnabled = true)
                                             )
                                         }
                                     }
-                                }
-                            }
+                                    taskRoutingRefreshTick++
+                                },
+                                onDismiss = { taskTypeForCenteredMenu = null }
+                            )
                         }
                     }
                 }
@@ -1122,7 +1134,7 @@ private fun ActionsPopupSection(
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
 
-        // 3. Direct Model Selection, Key Toggle ON/OFF, Duplicate & Edit (Tasks #1, #3, #6)
+        // 3. Direct Model Selection, Key Toggle ON/OFF, Duplicate, Drag Reorder & Edit
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1130,14 +1142,14 @@ private fun ActionsPopupSection(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = AppStrings.tr("כיבוי/הדלקה של מפתחות ובחירת מודל", "Toggle Keys ON/OFF & Select Model"),
+                    text = AppStrings.tr("כיבוי/הדלקה, גרירת סדר עדיפויות ובחירת מודל", "Toggle Keys, Drag Priority & Select Model"),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = AppStrings.tr(
-                        "הדלק/כבה מפתחות, שכפל מפתח או החלף מודל ישירות מכאן",
-                        "Toggle keys ON/OFF, duplicate a key, or switch models directly here"
+                        "גרור מפתחות לשינוי עדיפות, הדלק/כבה, שכפל או החלף מודל",
+                        "Drag keys to reorder priority, toggle ON/OFF, duplicate or switch model"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1196,228 +1208,240 @@ private fun ActionsPopupSection(
             }
         } else {
             val firstEnabledId = sortedKeys.firstOrNull { it.isEnabled }?.id
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                sortedKeys.forEach { keyEntity ->
-                    val isPrimary = keyEntity.id == firstEnabledId && keyEntity.isEnabled
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isPrimary) {
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            }
-                        ),
+            com.example.ui.components.DraggableReorderColumn(
+                items = sortedKeys,
+                keySelector = { it.id },
+                onReorderFinished = { newOrder ->
+                    scope.launch {
+                        repository.reorderKeys(newOrder.map { it.id })
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { _, keyEntity, isDragging, dragHandleModifier ->
+                val isPrimary = keyEntity.id == firstEnabledId && keyEntity.isEnabled
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDragging) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f)
+                        } else if (isPrimary) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        }
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(
+                            width = if (isPrimary) 1.5.dp else 0.5.dp,
+                            color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+                ) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(
-                                width = if (isPrimary) 1.5.dp else 0.5.dp,
-                                color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                shape = RoundedCornerShape(16.dp)
-                            )
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
+                                com.example.ui.components.DragHandleBadge(
+                                    priorityNumber = keyEntity.priority,
+                                    isDragging = isDragging,
+                                    dragHandleModifier = dragHandleModifier
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
-                                    Surface(
-                                        color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text(
-                                            text = if (isPrimary) AppStrings.tr("פעיל #1", "Active #1") else "#${keyEntity.priority}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isPrimary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = keyEntity.name,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "${keyEntity.provider.displayName} • ${keyEntity.parsedSupportedTasks.joinToString(", ") { it.emoji }}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                // Task #1: Switch to turn keys ON / OFF directly from 'פעולות'
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Switch(
-                                        checked = keyEntity.isEnabled,
-                                        onCheckedChange = { checked ->
-                                            scope.launch {
-                                                repository.updateKeyEntity(keyEntity.copy(isEnabled = checked))
-                                                val msg = if (checked) {
-                                                    AppStrings.tr("המפתח '${keyEntity.name}' הופעל ✅", "Key '${keyEntity.name}' enabled ✅")
-                                                } else {
-                                                    AppStrings.tr("המפתח '${keyEntity.name}' כובה ⏸️", "Key '${keyEntity.name}' disabled ⏸️")
-                                                }
-                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.testTag("actions_key_switch_${keyEntity.id}"),
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = MaterialTheme.colorScheme.primary,
-                                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
-                                        )
+                                    Text(
+                                        text = if (isPrimary) AppStrings.tr("פעיל #1", "Active #1") else "#${keyEntity.priority}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isPrimary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
-
-                                    IconButton(
-                                        onClick = {
-                                            scope.launch {
-                                                val copy = repository.duplicateKey(keyEntity.id)
-                                                if (copy != null) {
-                                                    Toast.makeText(
-                                                        context,
-                                                        AppStrings.tr(
-                                                            "שוכפל כ-'${copy.name}' עם מודל ${copy.selectedModel}",
-                                                            "Duplicated as '${copy.name}' with model ${copy.selectedModel}"
-                                                        ),
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("actions_duplicate_key_btn_${keyEntity.id}")
-                                    ) {
-                                        Icon(
-                                            Icons.Default.ContentCopy,
-                                            contentDescription = AppStrings.tr("שכפל מפתח", "Duplicate key"),
-                                            tint = MaterialTheme.colorScheme.secondary,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                    IconButton(
-                                        onClick = {
-                                            keyBeingEdited = keyEntity
-                                            showAddOrEditKeyDialog = true
-                                        },
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("edit_key_btn_${keyEntity.id}")
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Edit,
-                                            contentDescription = AppStrings.tr("ערוך מפתח ומודל", "Edit key & model"),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = keyEntity.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "${keyEntity.provider.displayName} • ${keyEntity.parsedSupportedTasks.joinToString(", ") { it.emoji }}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
 
-                            // Clickable Model Selector + Set as Primary Row
+                            // Switch to turn keys ON / OFF directly from 'פעולות'
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        keyForQuickModelSelect = keyEntity
-                                        quickModelSearchQuery = ""
-                                        quickModelsList = AiModelInfo.sortBestFirst(
-                                            keyEntity.provider.suggestedModels.map {
-                                                AiModelInfo(it, it, isRecommended = true)
-                                            }
-                                        )
-                                        isFetchingQuickModels = true
+                                Switch(
+                                    checked = keyEntity.isEnabled,
+                                    onCheckedChange = { checked ->
                                         scope.launch {
-                                            val res = repository.fetchModelsForKeyId(keyEntity.id)
-                                            if (res.models.isNotEmpty()) {
-                                                quickModelsList = AiModelInfo.sortBestFirst(res.models)
+                                            repository.updateKeyEntity(keyEntity.copy(isEnabled = checked))
+                                            val msg = if (checked) {
+                                                AppStrings.tr("המפתח '${keyEntity.name}' הופעל ✅", "Key '${keyEntity.name}' enabled ✅")
+                                            } else {
+                                                AppStrings.tr("המפתח '${keyEntity.name}' כובה ⏸️", "Key '${keyEntity.name}' disabled ⏸️")
                                             }
-                                            isFetchingQuickModels = false
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                         }
                                     },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("quick_model_picker_btn_${keyEntity.id}"),
-                                    shape = RoundedCornerShape(12.dp),
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Psychology,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = keyEntity.selectedModel,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 1
-                                            )
-                                        }
-                                        Icon(
-                                            Icons.Default.ArrowDropDown,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                }
+                                    modifier = Modifier.testTag("actions_key_switch_${keyEntity.id}"),
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                )
 
-                                if (!isPrimary) {
-                                    FilledTonalButton(
-                                        onClick = {
-                                            scope.launch {
-                                                repository.setKeyAsPrimary(keyEntity.id)
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            val copy = repository.duplicateKey(keyEntity.id)
+                                            if (copy != null) {
                                                 Toast.makeText(
                                                     context,
                                                     AppStrings.tr(
-                                                        "הוגדר כראשי (#1): ${keyEntity.selectedModel} ⚡",
-                                                        "Set as Primary (#1): ${keyEntity.selectedModel} ⚡"
+                                                        "שוכפל כ-'${copy.name}' עם מודל ${copy.selectedModel}",
+                                                        "Duplicated as '${copy.name}' with model ${copy.selectedModel}"
                                                     ),
                                                     Toast.LENGTH_SHORT
                                                 ).show()
                                             }
-                                        },
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .testTag("set_primary_key_btn_${keyEntity.id}"),
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(AppStrings.tr("קבע כראשי", "Set Primary"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("actions_duplicate_key_btn_${keyEntity.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = AppStrings.tr("שכפל מפתח", "Duplicate key"),
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        keyBeingEdited = keyEntity
+                                        showAddOrEditKeyDialog = true
+                                    },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("edit_key_btn_${keyEntity.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = AppStrings.tr("ערוך מפתח ומודל", "Edit key & model"),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // Clickable Model Selector + Set as Primary Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    keyForQuickModelSelect = keyEntity
+                                    quickModelSearchQuery = ""
+                                    quickModelsList = AiModelInfo.sortBestFirst(
+                                        keyEntity.provider.suggestedModels.map {
+                                            AiModelInfo(it, it, isRecommended = true)
+                                        }
+                                    )
+                                    isFetchingQuickModels = true
+                                    scope.launch {
+                                        val res = repository.fetchModelsForKeyId(keyEntity.id)
+                                        if (res.models.isNotEmpty()) {
+                                            quickModelsList = AiModelInfo.sortBestFirst(res.models)
+                                        }
+                                        isFetchingQuickModels = false
                                     }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("quick_model_picker_btn_${keyEntity.id}"),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Psychology,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = keyEntity.selectedModel,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            if (!isPrimary) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            repository.setKeyAsPrimary(keyEntity.id)
+                                            Toast.makeText(
+                                                context,
+                                                AppStrings.tr(
+                                                    "הוגדר כראשי (#1): ${keyEntity.selectedModel} ⚡",
+                                                    "Set as Primary (#1): ${keyEntity.selectedModel} ⚡"
+                                                ),
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .testTag("set_primary_key_btn_${keyEntity.id}"),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                ) {
+                                    Text(AppStrings.tr("קבע כראשי", "Set Primary"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1443,7 +1467,7 @@ private fun ActionsPopupSection(
         )
     }
 
-    // Quick Model Picker + Fallback Toggle + Task Type Modal for a selected key (Tasks #3, #4, #5, #6)
+    // Quick Model Picker + Fallback Toggle + Model Type Filter + Drag Reorder Modal
     val targetKey = keyForQuickModelSelect
     if (targetKey != null) {
         var selectedPrimaryModel by remember(targetKey.id) { mutableStateOf(targetKey.selectedModel) }
@@ -1457,13 +1481,21 @@ private fun ActionsPopupSection(
         var selectedKeyTasks by remember(targetKey.id) {
             mutableStateOf(targetKey.parsedSupportedTasks)
         }
+        var selectedModelFilter by remember(targetKey.id) {
+            mutableStateOf(com.example.data.model.ModelFilterType.ALL)
+        }
 
-        val filteredModels = remember(quickModelsList, quickModelSearchQuery) {
+        val freeModelsTotalCount = remember(quickModelsList) {
+            quickModelsList.count { it.effectivelyFree }
+        }
+
+        val filteredModels = remember(quickModelsList, quickModelSearchQuery, selectedModelFilter) {
+            val byFilter = quickModelsList.filter { it.matchesFilter(selectedModelFilter) }
             AiModelInfo.sortBestFirst(
                 if (quickModelSearchQuery.isBlank()) {
-                    quickModelsList
+                    byFilter
                 } else {
-                    quickModelsList.filter {
+                    byFilter.filter {
                         it.id.contains(quickModelSearchQuery, ignoreCase = true) ||
                             it.displayName.contains(quickModelSearchQuery, ignoreCase = true) ||
                             it.roleBadge.contains(quickModelSearchQuery, ignoreCase = true)
@@ -1493,8 +1525,8 @@ private fun ActionsPopupSection(
                         )
                         Text(
                             text = AppStrings.tr(
-                                "ספק: ${targetKey.provider.displayName} (המודלים הטובים ביותר בראש הרשימה ⭐)",
-                                "Provider: ${targetKey.provider.displayName} (Best models sorted first ⭐)"
+                                "${quickModelsList.size} מודלים ($freeModelsTotalCount חינמיים 🆓 בראש הרשימה)",
+                                "${quickModelsList.size} models ($freeModelsTotalCount FREE 🆓 sorted first)"
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
@@ -1572,10 +1604,43 @@ private fun ActionsPopupSection(
                         }
                     }
 
+                    // Filter Models by Type (Free, Text, Vision, Image Gen, Audio, Video, Files)
+                    Text(
+                        text = AppStrings.tr("סינון מודלים לפי סוג (חינמיים, תמונה, שמע, וידאו...):", "Filter models by type (Free, Vision, Audio, Video...):"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        com.example.data.model.ModelFilterType.entries.forEach { filterType ->
+                            val count = remember(quickModelsList, filterType) {
+                                quickModelsList.count { it.matchesFilter(filterType) }
+                            }
+                            if (filterType == com.example.data.model.ModelFilterType.ALL || count > 0) {
+                                val isSel = selectedModelFilter == filterType
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = { selectedModelFilter = filterType },
+                                    label = {
+                                        Text(
+                                            "${filterType.emoji} ${AppStrings.tr(filterType.labelHe, filterType.labelEn)} ($count)",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = quickModelSearchQuery,
                         onValueChange = { quickModelSearchQuery = it },
-                        label = { Text(AppStrings.tr("חפש מודל או הקלד מזהה מודל...", "Search model or type model ID...")) },
+                        label = { Text(AppStrings.tr("חפש מתוך ${filteredModels.size} מודלים או הקלד מזהה...", "Search ${filteredModels.size} models or type ID...")) },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
@@ -1591,14 +1656,17 @@ private fun ActionsPopupSection(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    Column(
+                    androidx.compose.foundation.lazy.LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(240.dp)
-                            .verticalScroll(rememberScrollState()),
+                            .height(250.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        filteredModels.forEach { modelInfo ->
+                        items(
+                            count = filteredModels.size,
+                            key = { idx -> filteredModels[idx].id }
+                        ) { idx ->
+                            val modelInfo = filteredModels[idx]
                             val isPrimarySelected = modelInfo.id == selectedPrimaryModel
                             val isFallbackEnabled = modelInfo.id in enabledFallbacks
                             Surface(
@@ -1635,14 +1703,19 @@ private fun ActionsPopupSection(
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Surface(
-                                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                                color = if (modelInfo.effectivelyFree) {
+                                                    MaterialTheme.colorScheme.tertiaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.secondaryContainer
+                                                },
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
                                                 Text(
                                                     text = modelInfo.roleBadge,
                                                     style = MaterialTheme.typography.labelSmall,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                    fontSize = 9.sp
+                                                    fontSize = 9.sp,
+                                                    fontWeight = if (modelInfo.effectivelyFree) FontWeight.Bold else FontWeight.Normal
                                                 )
                                             }
                                         }
@@ -1688,19 +1761,73 @@ private fun ActionsPopupSection(
                         }
 
                         if (quickModelSearchQuery.isNotBlank() && filteredModels.none { it.id.equals(quickModelSearchQuery.trim(), ignoreCase = true) }) {
-                            OutlinedButton(
-                                onClick = {
-                                    selectedPrimaryModel = quickModelSearchQuery.trim()
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(
-                                    AppStrings.tr(
-                                        "השתמש במודל מותאם אישית: \"${quickModelSearchQuery.trim()}\"",
-                                        "Use custom model: \"${quickModelSearchQuery.trim()}\""
+                            item {
+                                OutlinedButton(
+                                    onClick = {
+                                        selectedPrimaryModel = quickModelSearchQuery.trim()
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        AppStrings.tr(
+                                            "השתמש במודל מותאם אישית: \"${quickModelSearchQuery.trim()}\"",
+                                            "Use custom model: \"${quickModelSearchQuery.trim()}\""
+                                        )
                                     )
-                                )
+                                }
+                            }
+                        }
+                    }
+
+                    // Drag-and-drop fallback model order if fallbacks are enabled
+                    if (enabledFallbacks.size > 1) {
+                        Text(
+                            text = AppStrings.tr(
+                                "גרור כדי לשנות את סדר הקדימיות של מודלי הגיבוי במפתח:",
+                                "Drag to reorder fallback models priority:"
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        com.example.ui.components.DraggableReorderColumn(
+                            items = enabledFallbacks,
+                            keySelector = { it },
+                            onReorderFinished = { enabledFallbacks = it }
+                        ) { idx, fbModelId, isDragging, dragHandleModifier ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        com.example.ui.components.DragHandleBadge(
+                                            priorityNumber = idx + 2,
+                                            isDragging = isDragging,
+                                            dragHandleModifier = dragHandleModifier
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "#${idx + 2} • $fbModelId",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { enabledFallbacks = enabledFallbacks.filter { it != fbModelId } },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    }
+                                }
                             }
                         }
                     }

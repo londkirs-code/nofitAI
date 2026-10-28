@@ -737,6 +737,47 @@ class AiRepository(
         apiKeyDao.delete(entity)
     }
 
+    suspend fun deleteAllKeys() {
+        apiKeyDao.deleteAllKeys()
+    }
+
+    suspend fun reorderKeys(orderedIds: List<String>) {
+        orderedIds.forEachIndexed { index, id ->
+            apiKeyDao.updatePriority(id, index + 1)
+        }
+    }
+
+    suspend fun importParsedKeys(items: List<com.example.util.ParsedImportKeyItem>): Int {
+        if (items.isEmpty()) return 0
+        val existing = apiKeyDao.getAllKeys()
+        var nextPriority = (existing.maxOfOrNull { it.priority } ?: 0) + 1
+        val entities = items.map { item ->
+            val encrypted = CryptoEngine.encrypt(item.rawKey.trim())
+            ApiKeyEntity(
+                id = UUID.randomUUID().toString(),
+                provider = item.provider,
+                name = item.name.ifBlank { "${item.provider.displayName} #$nextPriority" },
+                encryptedKey = encrypted,
+                selectedModel = item.preferredModel.ifBlank { item.provider.defaultModel },
+                priority = nextPriority++,
+                isEnabled = true,
+                supportedTasks = item.supportedTasks.ifBlank { AiTaskType.DEFAULT_TASKS_CSV },
+                fallbackModels = item.fallbackModels.trim(),
+                customBaseUrl = item.customBaseUrl?.trim()?.takeIf { it.isNotBlank() },
+                customProtocol = item.customProtocol.ifBlank { "OPENAI" }
+            )
+        }
+        apiKeyDao.insertAll(entities)
+        return entities.size
+    }
+
+    suspend fun exportAllKeysWithPlain(): List<Pair<ApiKeyEntity, String>> {
+        val all = apiKeyDao.getAllKeys().sortedBy { it.priority }
+        return all.map { entity ->
+            entity to CryptoEngine.decrypt(entity.encryptedKey)
+        }
+    }
+
     suspend fun clearKeySuspension(id: String) {
         apiKeyDao.clearSuspension(id)
     }

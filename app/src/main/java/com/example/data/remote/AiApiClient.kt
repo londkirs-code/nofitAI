@@ -438,15 +438,37 @@ class AiApiClient {
 
                 val name = obj.optString("name", id)
                 val pricing = obj.optJSONObject("pricing")
-                val pPrompt = pricing?.optString("prompt", "0") ?: "0"
-                val pCompl = pricing?.optString("completion", "0") ?: "0"
-                val isFree = id.endsWith(":free") || (pPrompt == "0" && pCompl == "0")
+                val pPrompt = pricing?.optString("prompt", "1") ?: "1"
+                val pCompl = pricing?.optString("completion", "1") ?: "1"
+                val pPromptNum = pPrompt.toDoubleOrNull() ?: 1.0
+                val pComplNum = pCompl.toDoubleOrNull() ?: 1.0
+                val isFree = id.contains(":free", ignoreCase = true) || (pPromptNum == 0.0 && pComplNum == 0.0)
                 val ctx = obj.optInt("context_length", 0).takeIf { it > 0 }
                 val desc = obj.optString("description", "")
 
+                // Parse OpenRouter architecture modalities for accurate filtering
+                val arch = obj.optJSONObject("architecture")
+                val modalityStr = arch?.optString("modality", "")?.lowercase().orEmpty()
+                val explicitCaps = if (modalityStr.isNotBlank()) {
+                    val caps = mutableSetOf(com.example.data.model.AiTaskType.TEXT, com.example.data.model.AiTaskType.FILE_INPUT)
+                    if (modalityStr.contains("image->") || modalityStr.contains("+image")) {
+                        caps.add(com.example.data.model.AiTaskType.IMAGE_INPUT)
+                    }
+                    if (modalityStr.contains("->image")) {
+                        caps.add(com.example.data.model.AiTaskType.IMAGE_GEN)
+                    }
+                    if (modalityStr.contains("audio")) {
+                        caps.add(com.example.data.model.AiTaskType.AUDIO_GEN)
+                    }
+                    if (modalityStr.contains("video")) {
+                        caps.add(com.example.data.model.AiTaskType.VIDEO_GEN)
+                    }
+                    caps
+                } else null
+
                 val disp = if (isFree && !name.contains("free", ignoreCase = true)) "$name (חינמי)" else name
                 val isRec = id in ProviderType.OPENROUTER.suggestedModels ||
-                        (isFree && (id.contains("deepseek") || id.contains("gemini") || id.contains("llama-3.3") || id.contains("qwen")))
+                        (isFree && (id.contains("deepseek") || id.contains("gemini") || id.contains("llama-3.3") || id.contains("qwen") || id.contains("llama-4")))
 
                 list.add(
                     AiModelInfo(
@@ -455,13 +477,14 @@ class AiApiClient {
                         isFree = isFree,
                         contextWindow = ctx,
                         description = desc.take(120),
-                        isRecommended = isRec
+                        isRecommended = isRec,
+                        explicitCapabilities = explicitCaps
                     )
                 )
             }
             return FetchModelsResponse(
                 isSuccess = true,
-                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list).take(100) else ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) }
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) }
             )
         }
     }
@@ -640,7 +663,7 @@ class AiApiClient {
 
     private fun fetchHuggingFaceModels(apiKey: String): FetchModelsResponse {
         val req = Request.Builder()
-            .url("https://huggingface.co/api/models?pipeline_tag=text-generation&sort=trending&limit=30")
+            .url("https://huggingface.co/api/models?pipeline_tag=text-generation&sort=trending&limit=500")
             .apply {
                 if (apiKey.isNotBlank()) addHeader("Authorization", "Bearer $apiKey")
             }
@@ -651,7 +674,7 @@ class AiApiClient {
                 val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.HUGGINGFACE, "hf")
                 return FetchModelsResponse(
                     isSuccess = false,
-                    models = ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    models = ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) },
                     errorMessage = analyzed.hebrewSummary
                 )
             }
@@ -661,12 +684,12 @@ class AiApiClient {
             for (i in 0 until arr.length()) {
                 val id = arr.getJSONObject(i).optString("id", "")
                 if (id.isNotBlank()) {
-                    list.add(AiModelInfo(id = id, displayName = id, isRecommended = i < 5))
+                    list.add(AiModelInfo(id = id, displayName = id, isFree = true, isRecommended = i < 5))
                 }
             }
             return FetchModelsResponse(
                 isSuccess = true,
-                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) }
             )
         }
     }

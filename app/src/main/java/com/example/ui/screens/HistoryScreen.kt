@@ -5,7 +5,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -389,19 +391,51 @@ fun MessageBubble(message: ChatMessageEntity) {
         else -> MaterialTheme.colorScheme.onSurface
     }
 
+    val copyAction = {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("Message", message.content)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(
+            context,
+            AppStrings.tr("הועתק ללוח! 📋", "Copied to clipboard! 📋"),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    val shareAction = {
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, message.content.ifBlank { message.attachmentUri.orEmpty() })
+        }
+        context.startActivity(
+            Intent.createChooser(
+                shareIntent,
+                AppStrings.tr("שתף הודעה", "Share message")
+            )
+        )
+    }
+
+    val bubbleShape = RoundedCornerShape(
+        topStart = 16.dp,
+        topEnd = 16.dp,
+        bottomStart = if (isUser) 16.dp else 4.dp,
+        bottomEnd = if (isUser) 4.dp else 16.dp
+    )
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
+        @OptIn(ExperimentalFoundationApi::class)
         Surface(
             color = bubbleColor,
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            ),
-            modifier = Modifier.fillMaxWidth(0.92f)
+            shape = bubbleShape,
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .combinedClickable(
+                    onClick = { copyAction() },
+                    onLongClick = { shareAction() }
+                )
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(

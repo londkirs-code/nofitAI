@@ -50,6 +50,10 @@ interface ApiKeyDao {
     @Query("UPDATE api_keys SET priority = :newPriority WHERE id = :id")
     suspend fun updatePriority(id: String, newPriority: Int)
 
+    @Query("DELETE FROM api_keys")
+    suspend fun deleteAllKeys()
+
     @Query("SELECT COUNT(*) FROM api_keys")
     suspend fun getCount(): Int
 }
+

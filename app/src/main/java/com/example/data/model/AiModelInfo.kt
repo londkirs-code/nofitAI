@@ -113,19 +113,52 @@ data class AiModelInfo(
             }
         }
 
+    val effectivelyFree: Boolean
+        get() = isFree || id.contains(":free", ignoreCase = true) || displayName.contains("חינמי") || displayName.contains("free", ignoreCase = true)
+
+    fun matchesFilter(filter: ModelFilterType): Boolean {
+        val caps = capabilities
+        return when (filter) {
+            ModelFilterType.ALL -> true
+            ModelFilterType.FREE -> effectivelyFree
+            ModelFilterType.TEXT -> AiTaskType.TEXT in caps
+            ModelFilterType.VISION -> AiTaskType.IMAGE_INPUT in caps
+            ModelFilterType.IMAGE_GEN -> AiTaskType.IMAGE_GEN in caps
+            ModelFilterType.AUDIO -> AiTaskType.AUDIO_GEN in caps
+            ModelFilterType.VIDEO -> AiTaskType.VIDEO_GEN in caps
+            ModelFilterType.FILES -> AiTaskType.FILE_INPUT in caps
+        }
+    }
+
     companion object {
         /**
-         * Sorts models so the best/recommended models for the provider appear at the top (Task #5).
+         * Sorts models so ALL free models appear first (ordered by quality),
+         * followed by paid/regular models (ordered by quality).
          */
         fun sortBestFirst(models: List<AiModelInfo>): List<AiModelInfo> {
             return models.sortedWith(
-                compareByDescending<AiModelInfo> { it.qualityScore }
+                compareByDescending<AiModelInfo> { it.effectivelyFree }
+                    .thenByDescending { it.qualityScore }
                     .thenByDescending { it.isRecommended }
-                    .thenByDescending { it.isFree }
                     .thenBy { it.id }
             )
         }
     }
+}
+
+enum class ModelFilterType(
+    val labelHe: String,
+    val labelEn: String,
+    val emoji: String
+) {
+    ALL("הכל", "All", "✨"),
+    FREE("חינמי", "Free", "🟢"),
+    TEXT("טקסט", "Text", "📝"),
+    VISION("ראייה/תמונה", "Vision", "👁️"),
+    IMAGE_GEN("ייצור תמונה", "Image Gen", "🎨"),
+    AUDIO("שמע/סאונד", "Audio", "🔊"),
+    VIDEO("וידאו", "Video", "🎬"),
+    FILES("קבצים", "Files", "📎")
 }
 
 data class FetchModelsResponse(
@@ -133,3 +166,4 @@ data class FetchModelsResponse(
     val models: List<AiModelInfo>,
     val errorMessage: String? = null
 )
+

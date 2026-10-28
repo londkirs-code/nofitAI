@@ -282,41 +282,27 @@ fun SecuritySettingsScreen(
                         }
                     }
 
-                    DropdownMenu(
-                        expanded = isLanguageMenuExpanded,
-                        onDismissRequest = { isLanguageMenuExpanded = false },
-                        modifier = Modifier.fillMaxWidth(0.85f)
-                    ) {
-                        AppStrings.Lang.entries.forEach { langOption ->
-                            val isSelected = currentLang == langOption
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        text = if (langOption == AppStrings.Lang.AUTO) {
-                                            AppStrings.tr("אוטומטי (שפת המכשיר)", "Auto (Device Language)")
-                                        } else {
-                                            langOption.nativeLabel
-                                        },
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                },
-                                trailingIcon = if (isSelected) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                } else null,
-                                onClick = {
-                                    AppStrings.setLanguageOverride(context, langOption)
-                                    isLanguageMenuExpanded = false
+                    if (isLanguageMenuExpanded) {
+                        val langOptions = AppStrings.Lang.entries.map { langOption ->
+                            com.example.ui.components.CenteredMenuOption(
+                                value = langOption,
+                                title = if (langOption == AppStrings.Lang.AUTO) {
+                                    AppStrings.tr("אוטומטי (שפת המכשיר)", "Auto (Device Language)")
+                                } else {
+                                    langOption.nativeLabel
                                 }
                             )
                         }
+                        com.example.ui.components.CenteredSelectionMenuDialog(
+                            title = AppStrings.tr("שפת ממשק ותרגום אוטומטי", "App Language & Translation"),
+                            subtitle = AppStrings.tr("בחר שפה לתרגום כל המלל והמסכים באפליקציה:", "Choose language for all app text and screens:"),
+                            options = langOptions,
+                            selectedValue = currentLang,
+                            onSelect = { langOption ->
+                                AppStrings.setLanguageOverride(context, langOption)
+                            },
+                            onDismiss = { isLanguageMenuExpanded = false }
+                        )
                     }
                 }
             }

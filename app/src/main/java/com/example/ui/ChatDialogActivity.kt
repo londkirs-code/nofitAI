@@ -12,9 +12,11 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -592,6 +594,7 @@ fun ChatDialogScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatMessageBubble(
     message: ChatMessageEntity,
@@ -627,26 +630,39 @@ fun ChatMessageBubble(
             Spacer(modifier = Modifier.width(6.dp))
         }
 
+        val bubbleShape = RoundedCornerShape(
+            topStart = 16.dp,
+            topEnd = 16.dp,
+            bottomStart = if (isUser) 16.dp else 4.dp,
+            bottomEnd = if (isUser) 4.dp else 16.dp
+        )
+        val shareMessageAction = {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, message.content.ifBlank { message.attachmentUri.orEmpty() })
+            }
+            context.startActivity(
+                Intent.createChooser(
+                    shareIntent,
+                    AppStrings.tr("שתף הודעה זו", "Share this message")
+                )
+            )
+        }
         Surface(
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            ),
+            shape = bubbleShape,
             color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer,
             tonalElevation = if (isUser) 0.dp else 2.dp,
             modifier = Modifier
                 .fillMaxWidth(if (isUser) 0.85f else 0.92f)
+                .clip(bubbleShape)
+                .combinedClickable(
+                    onClick = { onCopy() },
+                    onLongClick = { shareMessageAction() }
+                )
                 .border(
                     width = 1.dp,
                     color = if (isUser) Color.Transparent else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp
-                    )
+                    shape = bubbleShape
                 )
         ) {
             Column(modifier = Modifier.padding(12.dp)) {

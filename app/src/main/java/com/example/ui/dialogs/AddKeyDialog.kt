@@ -7,6 +7,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,10 +31,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -51,8 +53,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -94,7 +94,12 @@ import com.example.data.model.AiTaskType
 import com.example.data.model.ApiKeyEntity
 import com.example.data.model.CustomApiProtocol
 import com.example.data.model.FetchModelsResponse
+import com.example.data.model.ModelFilterType
 import com.example.data.model.ProviderType
+import com.example.ui.components.CenteredMenuOption
+import com.example.ui.components.CenteredSelectionMenuDialog
+import com.example.ui.components.DragHandleBadge
+import com.example.ui.components.DraggableReorderColumn
 import com.example.util.AppStrings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -127,26 +132,30 @@ fun AddKeyDialog(
     val scope = rememberCoroutineScope()
 
     var selectedProvider by remember { mutableStateOf(existingKey?.provider ?: ProviderType.GROQ) }
-    var providerDropdownExpanded by remember { mutableStateOf(false) }
+    var providerMenuDialogOpen by remember { mutableStateOf(false) }
+    var autoDetectedProviderBadge by remember { mutableStateOf<ProviderType?>(null) }
+
+    var priority by remember { mutableIntStateOf(existingKey?.priority ?: nextPriority) }
     var name by remember {
         mutableStateOf(
-            existingKey?.name ?: "${selectedProvider.displayName} #${nextPriority}"
+            existingKey?.name ?: "${selectedProvider.displayName.substringBefore(" ")} #${nextPriority}"
         )
     }
+    var userEditedNameManually by remember { mutableStateOf(existingKey != null) }
     var apiKeyText by remember { mutableStateOf("") }
 
-    // Custom API Provider fields (Task #17)
+    // Custom API Provider fields
     var customBaseUrl by remember { mutableStateOf(existingKey?.customBaseUrl.orEmpty()) }
     var customProtocol by remember { mutableStateOf(existingKey?.customProtocol ?: CustomApiProtocol.OPENAI.name) }
 
-    // Supported Task/Modality Types for this key/model (Tasks #2 & #6)
+    // Supported Task/Modality Types for this key/model
     var selectedTasks by remember {
         mutableStateOf(
             existingKey?.parsedSupportedTasks ?: setOf(AiTaskType.TEXT, AiTaskType.IMAGE_INPUT, AiTaskType.FILE_INPUT)
         )
     }
 
-    // Enabled Fallback Models within this key in priority order (Task #3 - default empty/off)
+    // Enabled Fallback Models within this key in priority order
     var enabledFallbackModels by remember {
         val initialExtras = existingKey?.fallbackModels
             ?.split(",")
@@ -157,14 +166,14 @@ fun AddKeyDialog(
     }
     var showFallbackModelsSection by remember { mutableStateOf(enabledFallbackModels.isNotEmpty()) }
 
-    // Models state sorted with best models first (Task #5)
+    // Models state sorted with Free models first, then best paid models
     var modelsList by remember(selectedProvider) {
         val initial = AiModelInfo.sortBestFirst(
             selectedProvider.suggestedModels.mapIndexed { idx, modelId ->
                 AiModelInfo(
                     id = modelId,
                     displayName = modelId,
-                    isFree = selectedProvider == ProviderType.GROQ || modelId.contains("free", ignoreCase = true),
+                    isFree = selectedProvider == ProviderType.GROQ || selectedProvider == ProviderType.GEMINI || modelId.contains("free", ignoreCase = true),
                     isRecommended = idx < 3
                 )
             }
@@ -187,10 +196,11 @@ fun AddKeyDialog(
     var fetchSuccessCount by remember { mutableStateOf<Int?>(null) }
 
     var searchQuery by remember { mutableStateOf("") }
-    var showOnlyFreeModels by remember { mutableStateOf(selectedProvider == ProviderType.OPENROUTER) }
+    var activeModelFilter by remember { mutableStateOf(ModelFilterType.ALL) }
+    var fallbackSearchQuery by remember { mutableStateOf("") }
+    var fallbackModelFilter by remember { mutableStateOf(ModelFilterType.ALL) }
     var showModelSelectionModal by remember { mutableStateOf(false) }
 
-    var priority by remember { mutableIntStateOf(existingKey?.priority ?: nextPriority) }
     var showPlaygroundAdvanced by remember { mutableStateOf(false) }
     var temperature by remember { mutableFloatStateOf(existingKey?.temperature ?: 0.7f) }
     var maxTokensText by remember { mutableStateOf((existingKey?.maxTokens ?: 4096).toString()) }
@@ -198,12 +208,39 @@ fun AddKeyDialog(
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    fun applyProviderChange(newProvider: ProviderType, isAutoDetected: Boolean) {
+        val changed = selectedProvider != newProvider
+        selectedProvider = newProvider
+        if (isAutoDetected) {
+            autoDetectedProviderBadge = newProvider
+        } else {
+            autoDetectedProviderBadge = null
+        }
+        if (changed) {
+            selectedModel = newProvider.defaultModel
+            customModelInput = newProvider.defaultModel
+            modelsList = AiModelInfo.sortBestFirst(
+                newProvider.suggestedModels.mapIndexed { idx, it ->
+                    AiModelInfo(
+                        id = it,
+                        displayName = it,
+                        isFree = newProvider == ProviderType.GROQ || newProvider == ProviderType.GEMINI || it.contains("free", ignoreCase = true),
+                        isRecommended = idx < 3
+                    )
+                }
+            )
+            if (!userEditedNameManually && existingKey == null) {
+                name = "${newProvider.displayName.substringBefore(" ")} #${priority}"
+            }
+        }
+    }
+
     fun triggerLiveFetch(provider: ProviderType, key: String) {
         if (key.isBlank()) return
         isFetchingModels = true
         fetchStatusMessage = AppStrings.tr(
-            "שולף וממיין מודלים מובילים משרתי ${provider.displayName}...",
-            "Fetching & sorting top models from ${provider.displayName}..."
+            "טוען את כל המודלים משרתי ${provider.displayName} (חינמיים תחילה)...",
+            "Loading all models from ${provider.displayName} (free models first)..."
         )
         fetchStatusIsError = false
         fetchSuccessCount = null
@@ -215,9 +252,10 @@ fun AddKeyDialog(
                 val sorted = AiModelInfo.sortBestFirst(result.models)
                 modelsList = sorted
                 fetchSuccessCount = sorted.size
+                val freeCount = sorted.count { it.effectivelyFree }
                 fetchStatusMessage = AppStrings.tr(
-                    "נמצאו ${sorted.size} מודלים (המודלים הטובים ביותר בראש הרשימה ⭐)",
-                    "Found ${sorted.size} models (best models sorted first ⭐)"
+                    "נטענו כל ${sorted.size} המודלים ($freeCount חינמיים בראש הרשימה 🟢)",
+                    "Loaded all ${sorted.size} models ($freeCount free models sorted first 🟢)"
                 )
                 fetchStatusIsError = false
 
@@ -243,8 +281,8 @@ fun AddKeyDialog(
         if (existingKey != null && onFetchDetailedModelsForExistingKey != null) {
             isFetchingModels = true
             fetchStatusMessage = AppStrings.tr(
-                "שולף אוטומטית מודלים מאומתים משרתי ${selectedProvider.displayName}...",
-                "Automatically fetching verified models from ${selectedProvider.displayName}..."
+                "שולף אוטומטית את כל המודלים משרתי ${selectedProvider.displayName}...",
+                "Automatically fetching all models from ${selectedProvider.displayName}..."
             )
             fetchStatusIsError = false
             fetchSuccessCount = null
@@ -255,9 +293,10 @@ fun AddKeyDialog(
                     val sorted = AiModelInfo.sortBestFirst(result.models)
                     modelsList = sorted
                     fetchSuccessCount = sorted.size
+                    val freeCount = sorted.count { it.effectivelyFree }
                     fetchStatusMessage = AppStrings.tr(
-                        "נמצאו ${sorted.size} מודלים זמינים (הטובים ביותר בראש הרשימה)!",
-                        "Found ${sorted.size} available models (best models at top)!"
+                        "נטענו כל ${sorted.size} המודלים הזמינים ($freeCount חינמיים בראש הרשימה)!",
+                        "Loaded all ${sorted.size} available models ($freeCount free models first)!"
                     )
                     fetchStatusIsError = false
                     if (sorted.none { it.id == selectedModel }) {
@@ -272,21 +311,51 @@ fun AddKeyDialog(
 
     LaunchedEffect(apiKeyText, selectedProvider) {
         if (apiKeyText.isNotBlank() && apiKeyText.length >= 8) {
-            delay(500)
+            delay(450)
             triggerLiveFetch(selectedProvider, apiKeyText)
         }
     }
 
-    val filteredModels = remember(modelsList, searchQuery, showOnlyFreeModels, selectedProvider) {
+    val filteredModels = remember(modelsList, searchQuery, activeModelFilter, selectedProvider) {
         AiModelInfo.sortBestFirst(
             modelsList.filter { model ->
                 val matchesSearch = searchQuery.isBlank() ||
                     model.id.contains(searchQuery, ignoreCase = true) ||
                     model.displayName.contains(searchQuery, ignoreCase = true) ||
                     model.roleBadge.contains(searchQuery, ignoreCase = true)
-                val matchesFree = !showOnlyFreeModels || model.isFree
-                matchesSearch && matchesFree
+                val matchesType = model.matchesFilter(activeModelFilter)
+                matchesSearch && matchesType
             }
+        )
+    }
+
+    // Centered Provider Selection Menu Dialog (replaces cramped DropdownMenu)
+    if (providerMenuDialogOpen) {
+        val providerOptions = remember {
+            ProviderType.entries.map { provider ->
+                CenteredMenuOption(
+                    value = provider,
+                    title = provider.displayName,
+                    subtitle = "${provider.keyHint} • ${provider.documentationUrl}",
+                    badge = provider.defaultModel.substringAfterLast("/").take(16)
+                )
+            }
+        }
+        CenteredSelectionMenuDialog(
+            title = AppStrings.tr("בחירת ספק AI / סוג מפתח", "Select AI Provider / Key Type"),
+            subtitle = AppStrings.tr(
+                "המערכת מזהה אוטומטית לפי טקסט המפתח, ותמיד ניתן לשנות כאן ידנית",
+                "Auto-detected from key text, and can always be changed manually here"
+            ),
+            options = providerOptions,
+            selectedValue = selectedProvider,
+            onSelect = { chosen ->
+                applyProviderChange(chosen, isAutoDetected = false)
+                if (apiKeyText.isNotBlank()) {
+                    triggerLiveFetch(chosen, apiKeyText)
+                }
+            },
+            onDismiss = { providerMenuDialogOpen = false }
         )
     }
 
@@ -295,8 +364,8 @@ fun AddKeyDialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(usePlatformDefaultWidth = false),
             modifier = Modifier
-                .fillMaxWidth(0.96f)
-                .padding(vertical = 8.dp),
+                .fillMaxWidth(0.94f)
+                .padding(horizontal = 10.dp, vertical = 14.dp),
             shape = RoundedCornerShape(24.dp),
             title = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -326,8 +395,8 @@ fun AddKeyDialog(
                         )
                         Text(
                             text = AppStrings.tr(
-                                "מיון מודלים חכם • הגדרת משימות • מודלי גיבוי",
-                                "Smart model sorting • Task routing • Fallback models"
+                                "זיהוי ספק אוטומטי • חינמיים בראש הרשימה • גרירת עדיפויות",
+                                "Auto provider detection • Free models first • Drag priorities"
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -360,8 +429,8 @@ fun AddKeyDialog(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = AppStrings.tr(
-                                    "המפתח מוצפן בחומרת המכשיר (AES-256 GCM). המודלים הטובים ביותר מוצגים תמיד בראש הרשימה.",
-                                    "Key is hardware-encrypted (AES-256 GCM). Best models are always sorted first."
+                                    "המפתח מוצפן בחומרת המכשיר (AES-256 GCM). כל המודלים החינמיים נטענים ראשונים ואחריהם שאר המודלים.",
+                                    "Key is hardware-encrypted (AES-256 GCM). All free models load first, followed by the rest."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -369,148 +438,142 @@ fun AddKeyDialog(
                         }
                     }
 
-                    // 1. Provider Selection Dropdown
-                    Text(
-                        text = AppStrings.tr(
-                            "1. בחר ספק AI / שירות (או מפתח מותאם אישית):",
-                            "1. Choose AI Provider / Service (or Custom API):"
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    // 1. Provider Selection (Auto-detected + Manual Override)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = AppStrings.tr(
+                                "1. ספק AI / שירות (מזוהה אוטומטית או בחירה ידנית):",
+                                "1. AI Provider / Service (Auto-detected or manual choice):"
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        Surface(
-                            onClick = { providerDropdownExpanded = !providerDropdownExpanded },
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("provider_dropdown_selector")
+                    Surface(
+                        onClick = { providerMenuDialogOpen = true },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("provider_dropdown_selector")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.weight(1f)
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(34.dp)
                                 ) {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        modifier = Modifier.size(32.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = selectedProvider.displayName.take(1),
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                fontSize = 14.sp
-                                            )
-                                        }
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = selectedProvider.displayName.take(1),
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontSize = 14.sp
+                                        )
                                     }
-                                    Column {
+                                }
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = selectedProvider.displayName,
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Text(
-                                            text = when (selectedProvider) {
-                                                ProviderType.GROQ -> AppStrings.tr("מודלי קוד פתוח במהירות קיצונית (Llama, DeepSeek)", "Ultra-fast open models (Llama, DeepSeek)")
-                                                ProviderType.OPENROUTER -> AppStrings.tr("גישה מאוחדת למאות מודלים מובילים וחינמיים", "Unified access to hundreds of top & free models")
-                                                ProviderType.GEMINI -> AppStrings.tr("דגמי Gemini 2.5 / 2.0 של Google (טקסט, ראייה ותמונה)", "Google Gemini 2.5 / 2.0 (text, vision & image)")
-                                                ProviderType.OPENAI -> AppStrings.tr("GPT-4o, o3-mini, DALL-E 3 ו-TTS", "GPT-4o, o3-mini, DALL-E 3 & TTS")
-                                                ProviderType.CLAUDE -> AppStrings.tr("Claude 3.7 Sonnet, Claude 3.5 Haiku", "Claude 3.7 Sonnet, Claude 3.5 Haiku")
-                                                ProviderType.DEEPSEEK -> AppStrings.tr("DeepSeek-V3 ו-DeepSeek-R1", "DeepSeek-V3 & DeepSeek-R1")
-                                                ProviderType.MISTRAL -> AppStrings.tr("Mistral Large, Codestral ו-Pixtral", "Mistral Large, Codestral & Pixtral")
-                                                ProviderType.GROK -> AppStrings.tr("xAI Grok 3 ו-Grok 2 Vision", "xAI Grok 3 & Grok 2 Vision")
-                                                ProviderType.HUGGINGFACE -> AppStrings.tr("HuggingFace Serverless Inference", "HuggingFace Serverless Inference")
-                                                ProviderType.CUSTOM -> AppStrings.tr("שרת API מותאם אישית (OpenAI / Gemini / Claude)", "Custom API Server (OpenAI / Gemini / Claude)")
-                                            },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
                                     }
+                                    Text(
+                                        text = when (selectedProvider) {
+                                            ProviderType.GROQ -> AppStrings.tr("מודלי קוד פתוח במהירות קיצונית (Llama, DeepSeek)", "Ultra-fast open models (Llama, DeepSeek)")
+                                            ProviderType.OPENROUTER -> AppStrings.tr("גישה מאוחדת למאות מודלים חינמיים ומתקדמים", "Unified access to hundreds of free & top models")
+                                            ProviderType.GEMINI -> AppStrings.tr("דגמי Gemini 2.5 / 2.0 של Google (טקסט, ראייה ותמונה)", "Google Gemini 2.5 / 2.0 (text, vision & image)")
+                                            ProviderType.OPENAI -> AppStrings.tr("GPT-4o, o3-mini, DALL-E 3 ו-TTS", "GPT-4o, o3-mini, DALL-E 3 & TTS")
+                                            ProviderType.CLAUDE -> AppStrings.tr("Claude 3.7 Sonnet, Claude 3.5 Haiku", "Claude 3.7 Sonnet, Claude 3.5 Haiku")
+                                            ProviderType.DEEPSEEK -> AppStrings.tr("DeepSeek-V3 ו-DeepSeek-R1", "DeepSeek-V3 & DeepSeek-R1")
+                                            ProviderType.MISTRAL -> AppStrings.tr("Mistral Large, Codestral ו-Pixtral", "Mistral Large, Codestral & Pixtral")
+                                            ProviderType.GROK -> AppStrings.tr("xAI Grok 3 ו-Grok 2 Vision", "xAI Grok 3 & Grok 2 Vision")
+                                            ProviderType.HUGGINGFACE -> AppStrings.tr("HuggingFace Serverless Inference", "HuggingFace Serverless Inference")
+                                            ProviderType.CUSTOM -> AppStrings.tr("שרת API מותאם אישית (OpenAI / Gemini / Claude)", "Custom API Server (OpenAI / Gemini / Claude)")
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = AppStrings.tr("שנה ספק", "Change"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 Icon(
-                                    imageVector = if (providerDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                    imageVector = if (providerMenuDialogOpen) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
+                    }
 
-                        DropdownMenu(
-                            expanded = providerDropdownExpanded,
-                            onDismissRequest = { providerDropdownExpanded = false },
-                            shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.fillMaxWidth(0.92f)
+                    AnimatedVisibility(visible = autoDetectedProviderBadge != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            ProviderType.values().forEach { provider ->
-                                val isSelected = selectedProvider == provider
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = provider.displayName,
-                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                                )
-                                                Text(
-                                                    text = "${provider.keyHint} • ${provider.documentationUrl}",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                            if (isSelected) {
-                                                Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        selectedProvider = provider
-                                        selectedModel = provider.defaultModel
-                                        customModelInput = provider.defaultModel
-                                        modelsList = AiModelInfo.sortBestFirst(
-                                            provider.suggestedModels.mapIndexed { idx, it ->
-                                                AiModelInfo(
-                                                    id = it,
-                                                    displayName = it,
-                                                    isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
-                                                    isRecommended = idx < 3
-                                                )
-                                            }
-                                        )
-                                        showOnlyFreeModels = provider == ProviderType.OPENROUTER
-                                        if (existingKey == null) {
-                                            name = "${provider.displayName} #${priority}"
-                                        }
-                                        providerDropdownExpanded = false
-                                        if (apiKeyText.isNotBlank()) {
-                                            triggerLiveFetch(provider, apiKeyText)
-                                        }
-                                    }
-                                )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = AppStrings.tr(
+                                            "המערכת זיהתה ושייכה אוטומטית לפי טקסט המפתח: ${autoDetectedProviderBadge?.displayName.orEmpty()} (ניתן לשנות ידנית למעלה)",
+                                            "Auto-detected from key text: ${autoDetectedProviderBadge?.displayName.orEmpty()} (can be changed manually above)"
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { providerMenuDialogOpen = true },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text(AppStrings.tr("שנה ידנית", "Change"), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
 
-                    // Direct Link Button to Provider's API Key Page (Task #4)
+                    // Direct Link Button to Provider's API Key Page
                     OutlinedButton(
                         onClick = {
                             try {
@@ -546,7 +609,7 @@ fun AddKeyDialog(
                         )
                     }
 
-                    // Custom API Provider Configuration (Task #17)
+                    // Custom API Provider Configuration
                     AnimatedVisibility(visible = selectedProvider == ProviderType.CUSTOM) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
@@ -609,7 +672,10 @@ fun AddKeyDialog(
                     // Key Name
                     OutlinedTextField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            userEditedNameManually = true
+                        },
                         label = { Text(AppStrings.tr("כינוי למפתח", "Key Nickname")) },
                         placeholder = { Text(AppStrings.tr("למשל: Groq ראשי או Gemini לתמונות", "e.g., Main Groq or Gemini Vision")) },
                         singleLine = true,
@@ -618,17 +684,23 @@ fun AddKeyDialog(
                             .testTag("key_name_input")
                     )
 
-                    // API Key input - PERMANENTLY MASKED & SECURE
+                    // API Key input - AUTO-DETECTS PROVIDER & PERMANENTLY MASKED
                     OutlinedTextField(
                         value = apiKeyText,
-                        onValueChange = {
-                            apiKeyText = it.trim()
+                        onValueChange = { newText ->
+                            val trimmed = newText.trim()
+                            apiKeyText = trimmed
                             errorMessage = null
+
+                            val detected = ProviderType.detectProviderFromKey(trimmed, name)
+                            if (detected != null) {
+                                applyProviderChange(detected, isAutoDetected = true)
+                            }
                         },
                         label = {
                             Text(
                                 if (existingKey == null) {
-                                    AppStrings.tr("מפתח API (${selectedProvider.keyHint})", "API Key (${selectedProvider.keyHint})")
+                                    AppStrings.tr("מפתח API (מזהה ספק אוטומטית לפי הטקסט)", "API Key (Auto-detects provider from text)")
                                 } else {
                                     AppStrings.tr("מפתח API (שמור ומוצפן בחומרה 🔒)", "API Key (Hardware Encrypted 🔒)")
                                 }
@@ -669,8 +741,8 @@ fun AddKeyDialog(
                             } else {
                                 Text(
                                     AppStrings.tr(
-                                        "המפתח יוצפן בחומרה ולא יוצג בגלוי לעולם",
-                                        "Key will be hardware-encrypted and never shown in plain text"
+                                        "הדבק מפתח מכל ספק — הספק יזוהה אוטומטית (ותמיד ניתן לשנותו ידנית למעלה)",
+                                        "Paste a key from any provider — provider is auto-detected (and can be changed manually above)"
                                     ),
                                     fontSize = 11.sp
                                 )
@@ -720,8 +792,8 @@ fun AddKeyDialog(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = fetchStatusMessage ?: AppStrings.tr(
-                                            "לחץ לבדיקת המפתח ושליפת מודלים עדכניים מהשרת",
-                                            "Tap to verify key and fetch live models from server"
+                                            "לחץ לבדיקת המפתח וטעינת כל המודלים (ללא הגבלת כמות, חינמיים תחילה)",
+                                            "Tap to verify key and load all models (unlimited, free models first)"
                                         ),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = if (fetchSuccessCount != null) FontWeight.Bold else FontWeight.Normal,
@@ -731,14 +803,32 @@ fun AddKeyDialog(
 
                                 Button(
                                     onClick = {
-                                        if (apiKeyText.isBlank()) {
+                                        if (apiKeyText.isBlank() && existingKey == null) {
                                             errorMessage = AppStrings.tr(
                                                 "הזן תחילה מפתח API כדי לשלוף מודלים מהשרת",
                                                 "Enter an API key first to fetch models from server"
                                             )
                                             return@Button
                                         }
-                                        triggerLiveFetch(selectedProvider, apiKeyText)
+                                        if (apiKeyText.isNotBlank()) {
+                                            triggerLiveFetch(selectedProvider, apiKeyText)
+                                        } else if (existingKey != null && onFetchDetailedModelsForExistingKey != null) {
+                                            scope.launch {
+                                                isFetchingModels = true
+                                                val res = onFetchDetailedModelsForExistingKey(existingKey.id)
+                                                isFetchingModels = false
+                                                if (res.models.isNotEmpty()) {
+                                                    val sorted = AiModelInfo.sortBestFirst(res.models)
+                                                    modelsList = sorted
+                                                    fetchSuccessCount = sorted.size
+                                                    val freeCount = sorted.count { it.effectivelyFree }
+                                                    fetchStatusMessage = AppStrings.tr(
+                                                        "נטענו כל ${sorted.size} המודלים ($freeCount חינמיים בראש הרשימה)!",
+                                                        "Loaded all ${sorted.size} models ($freeCount free models first)!"
+                                                    )
+                                                }
+                                            }
+                                        }
                                     },
                                     enabled = !isFetchingModels,
                                     modifier = Modifier.height(34.dp),
@@ -756,20 +846,20 @@ fun AddKeyDialog(
                                         Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(15.dp))
                                     }
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(AppStrings.tr("שלוף מ-API", "Fetch Models"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(AppStrings.tr("שלוף הכל", "Fetch All"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
 
-                    // 2. Model Selection Section (Sorted Best First - Task #5 & #6)
+                    // 2. Model Selection Section (Free First + Best Quality)
                     val currentModelId = customModelInput.ifBlank { selectedModel.ifBlank { selectedProvider.defaultModel } }
                     val currentModelInfo = modelsList.find { it.id == currentModelId } ?: AiModelInfo(id = currentModelId)
 
                     Text(
                         text = AppStrings.tr(
-                            "2. מודל ראשי במפתח זה (הטובים ביותר בראש הרשימה):",
-                            "2. Primary Model for this Key (Best Models First):"
+                            "2. מודל ראשי במפתח זה (החינמיים והטובים ביותר בראש הרשימה):",
+                            "2. Primary Model for this Key (Free & Best Models First):"
                         ),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
@@ -837,7 +927,7 @@ fun AddKeyDialog(
                                             )
                                         }
 
-                                        val isModelFree = currentModelInfo.isFree || currentModelId.contains(":free", ignoreCase = true)
+                                        val isModelFree = currentModelInfo.effectivelyFree
                                         Surface(
                                             color = if (isModelFree) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
                                             shape = RoundedCornerShape(4.dp)
@@ -860,13 +950,13 @@ fun AddKeyDialog(
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                 modifier = Modifier.height(34.dp)
                             ) {
-                                Text(AppStrings.tr("החלף מודל", "Change Model"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(AppStrings.tr("החלף מודל (${modelsList.size})", "Change (${modelsList.size})"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
 
-                    // 3. Task / Modality Type Assignment (Tasks #2 & #6)
+                    // 3. Task / Modality Type Assignment
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         shape = RoundedCornerShape(14.dp),
@@ -926,7 +1016,7 @@ fun AddKeyDialog(
                         }
                     }
 
-                    // 4. Priority Order of Fallback Models within this Key (Task #3)
+                    // 4. Drag-and-Drop Priority Order of Fallback Models within this Key
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         shape = RoundedCornerShape(14.dp),
@@ -944,8 +1034,8 @@ fun AddKeyDialog(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = AppStrings.tr(
-                                            "4. מודלי גיבוי וסדר עדיפויות בתוך המפתח",
-                                            "4. Fallback Models & Priority Order within Key"
+                                            "4. מודלי גיבוי וסידור עדיפויות בגרירה בתוך המפתח",
+                                            "4. Fallback Models & Drag-and-Drop Priority within Key"
                                         ),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold
@@ -953,13 +1043,13 @@ fun AddKeyDialog(
                                     Text(
                                         text = if (enabledFallbackModels.isEmpty()) {
                                             AppStrings.tr(
-                                                "ברירת מחדל: שאר המודלים מכובים. הדלק מודלים נוספים למעבר אוטומטי אם המודל הראשי לא זמין.",
-                                                "Default: all other models are OFF. Turn on extra models to auto-fallback if primary is unavailable."
+                                                "ברירת מחדל: שאר המודלים מכובים. הדלק מודלים נוספים וגרור אותם לקביעת סדר הגיבוי.",
+                                                "Default: other models are OFF. Enable extra models and drag them to set fallback order."
                                             )
                                         } else {
                                             AppStrings.tr(
-                                                "מופעלים ${enabledFallbackModels.size} מודלי גיבוי לפי סדר עדיפות:",
-                                                "${enabledFallbackModels.size} fallback models enabled in priority order:"
+                                                "מופעלים ${enabledFallbackModels.size} מודלי גיבוי (גרור כדי לשנות סדר עדיפות):",
+                                                "${enabledFallbackModels.size} fallback models enabled (drag to reorder priority):"
                                             )
                                         },
                                         style = MaterialTheme.typography.bodySmall,
@@ -981,21 +1071,37 @@ fun AddKeyDialog(
                             }
 
                             AnimatedVisibility(visible = showFallbackModelsSection) {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (enabledFallbackModels.isNotEmpty()) {
                                         Text(
                                             text = AppStrings.tr(
-                                                "סדר מעבר אוטומטי במפתח זה (אחרי $currentModelId):",
-                                                "Auto-fallback order in this key (after $currentModelId):"
+                                                "✋ גרור את סמל הגרירה לשינוי סדר המעבר האוטומטי (אחרי $currentModelId):",
+                                                "✋ Drag the handle to reorder automatic fallback (after $currentModelId):"
                                             ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.primary,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        enabledFallbackModels.forEachIndexed { idx, fallbackId ->
+
+                                        DraggableReorderColumn(
+                                            items = enabledFallbackModels,
+                                            keySelector = { it },
+                                            onReorderFinished = { newOrder ->
+                                                enabledFallbackModels = newOrder
+                                            },
+                                            verticalSpacing = 6.dp
+                                        ) { idx, fallbackId, isDragging, dragModifier ->
                                             Surface(
-                                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                                                color = if (isDragging) {
+                                                    MaterialTheme.colorScheme.primaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                                                },
                                                 shape = RoundedCornerShape(10.dp),
+                                                border = BorderStroke(
+                                                    width = if (isDragging) 1.5.dp else 0.5.dp,
+                                                    color = if (isDragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                                ),
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Row(
@@ -1005,50 +1111,30 @@ fun AddKeyDialog(
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text(
-                                                        text = "#${idx + 2} • $fallbackId",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        fontWeight = FontWeight.Bold,
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                         modifier = Modifier.weight(1f)
-                                                    )
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        IconButton(
-                                                            onClick = {
-                                                                if (idx > 0) {
-                                                                    val mut = enabledFallbackModels.toMutableList()
-                                                                    val tmp = mut[idx - 1]
-                                                                    mut[idx - 1] = mut[idx]
-                                                                    mut[idx] = tmp
-                                                                    enabledFallbackModels = mut
-                                                                }
-                                                            },
-                                                            enabled = idx > 0,
-                                                            modifier = Modifier.size(26.dp)
-                                                        ) {
-                                                            Icon(Icons.Default.ArrowUpward, contentDescription = AppStrings.tr("העלה", "Move up"), modifier = Modifier.size(15.dp))
-                                                        }
-                                                        IconButton(
-                                                            onClick = {
-                                                                if (idx < enabledFallbackModels.size - 1) {
-                                                                    val mut = enabledFallbackModels.toMutableList()
-                                                                    val tmp = mut[idx + 1]
-                                                                    mut[idx + 1] = mut[idx]
-                                                                    mut[idx] = tmp
-                                                                    enabledFallbackModels = mut
-                                                                }
-                                                            },
-                                                            enabled = idx < enabledFallbackModels.size - 1,
-                                                            modifier = Modifier.size(26.dp)
-                                                        ) {
-                                                            Icon(Icons.Default.ArrowDownward, contentDescription = AppStrings.tr("הורד", "Move down"), modifier = Modifier.size(15.dp))
-                                                        }
-                                                        Switch(
-                                                            checked = true,
-                                                            onCheckedChange = {
-                                                                enabledFallbackModels = enabledFallbackModels.filter { it != fallbackId }
-                                                            }
+                                                    ) {
+                                                        DragHandleBadge(
+                                                            priorityNumber = idx + 2,
+                                                            isDragging = isDragging,
+                                                            dragHandleModifier = dragModifier,
+                                                            labelText = "#${idx + 2}"
+                                                        )
+                                                        Text(
+                                                            text = fallbackId,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            fontWeight = FontWeight.Bold,
+                                                            modifier = Modifier.weight(1f)
                                                         )
                                                     }
+                                                    Switch(
+                                                        checked = true,
+                                                        onCheckedChange = {
+                                                            enabledFallbackModels = enabledFallbackModels.filter { it != fallbackId }
+                                                        }
+                                                    )
                                                 }
                                             }
                                         }
@@ -1056,17 +1142,70 @@ fun AddKeyDialog(
 
                                     Text(
                                         text = AppStrings.tr(
-                                            "הדלק או כבה מודלים נוספים במפתח זה (ברירת מחדל: כבוי):",
-                                            "Toggle additional models in this key ON/OFF (default: OFF):"
+                                            "הדלק או כבה מודלים נוספים במפתח זה (ללא הגבלת כמות • חינמיים ראשונים):",
+                                            "Toggle additional models in this key ON/OFF (unlimited • free first):"
                                         ),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
 
-                                    modelsList
-                                        .filter { it.id != currentModelId && it.id !in enabledFallbackModels }
-                                        .take(12)
-                                        .forEach { candidate ->
+                                    OutlinedTextField(
+                                        value = fallbackSearchQuery,
+                                        onValueChange = { fallbackSearchQuery = it },
+                                        placeholder = { Text(AppStrings.tr("חפש מודל גיבוי להוספה...", "Search fallback model to add..."), fontSize = 11.sp) },
+                                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                                        trailingIcon = {
+                                            if (fallbackSearchQuery.isNotBlank()) {
+                                                IconButton(onClick = { fallbackSearchQuery = "" }) {
+                                                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                }
+                                            }
+                                        },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    // Filter chips by model type in fallback section too
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        ModelFilterType.entries.forEach { filterType ->
+                                            val isSel = fallbackModelFilter == filterType
+                                            FilterChip(
+                                                selected = isSel,
+                                                onClick = { fallbackModelFilter = filterType },
+                                                label = {
+                                                    Text(
+                                                        "${filterType.emoji} ${AppStrings.tr(filterType.labelHe, filterType.labelEn)}",
+                                                        fontSize = 10.sp
+                                                    )
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    val availableCandidates = remember(modelsList, currentModelId, enabledFallbackModels, fallbackSearchQuery, fallbackModelFilter) {
+                                        modelsList.filter { candidate ->
+                                            candidate.id != currentModelId &&
+                                                candidate.id !in enabledFallbackModels &&
+                                                candidate.matchesFilter(fallbackModelFilter) &&
+                                                (fallbackSearchQuery.isBlank() ||
+                                                    candidate.id.contains(fallbackSearchQuery, ignoreCase = true) ||
+                                                    candidate.displayName.contains(fallbackSearchQuery, ignoreCase = true) ||
+                                                    candidate.roleBadge.contains(fallbackSearchQuery, ignoreCase = true))
+                                        }
+                                    }
+
+                                    LazyColumn(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(max = 220.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        items(availableCandidates, key = { it.id }) { candidate ->
                                             Surface(
                                                 color = MaterialTheme.colorScheme.surface,
                                                 shape = RoundedCornerShape(8.dp),
@@ -1080,11 +1219,23 @@ fun AddKeyDialog(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                            text = candidate.id,
-                                                            style = MaterialTheme.typography.bodySmall,
-                                                            fontWeight = FontWeight.Medium
-                                                        )
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            Text(
+                                                                text = candidate.id,
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                            if (candidate.effectivelyFree) {
+                                                                Spacer(modifier = Modifier.width(6.dp))
+                                                                Text(
+                                                                    text = AppStrings.tr("🟢 חינמי", "🟢 Free"),
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    fontSize = 9.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = Color(0xFF16A34A)
+                                                                )
+                                                            }
+                                                        }
                                                         Text(
                                                             text = candidate.roleBadge,
                                                             style = MaterialTheme.typography.labelSmall,
@@ -1103,19 +1254,21 @@ fun AddKeyDialog(
                                                 }
                                             }
                                         }
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Modal Dialog for Clean, Directional Model Selection
+                    // Modal Dialog for Centered, Unlimited, Free-First Model Selection + Capability Filters
                     if (showModelSelectionModal) {
+                        val totalFreeCount = remember(modelsList) { modelsList.count { it.effectivelyFree } }
                         AlertDialog(
                             onDismissRequest = { showModelSelectionModal = false },
                             properties = DialogProperties(usePlatformDefaultWidth = false),
                             modifier = Modifier
-                                .fillMaxWidth(0.96f)
-                                .padding(vertical = 8.dp),
+                                .fillMaxWidth(0.94f)
+                                .padding(horizontal = 10.dp, vertical = 14.dp),
                             shape = RoundedCornerShape(24.dp),
                             title = {
                                 Column {
@@ -1129,8 +1282,8 @@ fun AddKeyDialog(
                                     )
                                     Text(
                                         text = AppStrings.tr(
-                                            "המודלים הטובים והמומלצים ביותר מופיעים אוטומטית בראש הרשימה ⭐",
-                                            "Best & top-ranked models appear automatically at the top ⭐"
+                                            "כל המודלים החינמיים ($totalFreeCount) נטענים ראשונים בראש הרשימה, ואחריהם כל השאר (סה\"כ ${modelsList.size}) 🟢⭐",
+                                            "All free models ($totalFreeCount) load first at the top, followed by the rest (total ${modelsList.size}) 🟢⭐"
                                         ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary
@@ -1145,7 +1298,7 @@ fun AddKeyDialog(
                                     OutlinedTextField(
                                         value = searchQuery,
                                         onValueChange = { searchQuery = it },
-                                        placeholder = { Text(AppStrings.tr("חפש מודל (שם, תפקיד, תמונה, free)...", "Search model (name, role, vision, free)..."), fontSize = 12.sp) },
+                                        placeholder = { Text(AppStrings.tr("חפש מודל (שם, תפקיד, תמונה, שמע, free)...", "Search model (name, role, vision, audio, free)..."), fontSize = 12.sp) },
                                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
                                         trailingIcon = {
                                             if (searchQuery.isNotBlank()) {
@@ -1155,35 +1308,57 @@ fun AddKeyDialog(
                                             }
                                         },
                                         singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+
+                                    // Model Type / Capability Filter Chips (All, Free, Text, Vision, Image Gen, Audio, Video, Files)
+                                    Text(
+                                        text = AppStrings.tr("סינון לפי סוג מודל:", "Filter by model type:"),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(50.dp)
-                                    )
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        ModelFilterType.entries.forEach { filterType ->
+                                            val isSelected = activeModelFilter == filterType
+                                            FilterChip(
+                                                selected = isSelected,
+                                                onClick = { activeModelFilter = filterType },
+                                                label = {
+                                                    Text(
+                                                        text = "${filterType.emoji} ${AppStrings.tr(filterType.labelHe, filterType.labelEn)}",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                    )
+                                                },
+                                                leadingIcon = if (isSelected) {
+                                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(12.dp)) }
+                                                } else null
+                                            )
+                                        }
+                                    }
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        val filteredFreeCount = filteredModels.count { it.effectivelyFree }
                                         Text(
                                             text = AppStrings.tr(
-                                                "זמינים: ${filteredModels.size} מודלים (ממוינים לפי איכות)",
-                                                "Available: ${filteredModels.size} models (sorted by quality)"
+                                                "מוצגים: ${filteredModels.size} מודלים ($filteredFreeCount חינמיים ראשונים)",
+                                                "Showing: ${filteredModels.size} models ($filteredFreeCount free first)"
                                             ),
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.Bold
                                         )
-
-                                        if (selectedProvider == ProviderType.OPENROUTER || modelsList.any { it.isFree }) {
-                                            FilterChip(
-                                                selected = showOnlyFreeModels,
-                                                onClick = { showOnlyFreeModels = !showOnlyFreeModels },
-                                                label = { Text(AppStrings.tr("חינמיים בלבד", "Free Only"), fontSize = 10.sp) },
-                                                leadingIcon = if (showOnlyFreeModels) {
-                                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(11.dp)) }
-                                                } else null
-                                            )
-                                        }
                                     }
 
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1191,25 +1366,23 @@ fun AddKeyDialog(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(max = 260.dp)
+                                            .heightIn(max = 310.dp)
                                     ) {
                                         if (filteredModels.isEmpty()) {
                                             Text(
-                                                text = AppStrings.tr("לא נמצאו מודלים העונים לחיפוש.", "No models match your search."),
+                                                text = AppStrings.tr("לא נמצאו מודלים העונים לסינון.", "No models match your filter."),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.padding(14.dp)
                                             )
                                         } else {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .verticalScroll(rememberScrollState()),
+                                            LazyColumn(
+                                                modifier = Modifier.fillMaxWidth(),
                                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                filteredModels.forEach { modelInfo ->
+                                                items(filteredModels, key = { it.id }) { modelInfo ->
                                                     val isSelected = currentModelId == modelInfo.id
-                                                    val isModelFree = modelInfo.isFree || modelInfo.id.contains(":free", ignoreCase = true)
+                                                    val isModelFree = modelInfo.effectivelyFree
                                                     Surface(
                                                         shape = RoundedCornerShape(10.dp),
                                                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
@@ -1420,8 +1593,8 @@ fun AddKeyDialog(
                             )
                             Text(
                                 text = AppStrings.tr(
-                                    "אם מודל מחזיר שגיאה, המערכת עוברת אוטומטית למודל הבא אחריו.",
-                                    "If a model returns an error, the system automatically falls back to the next one."
+                                    "בעמוד המפתחות ניתן גם לגרור מפתחות כדי לשנות את סדר הקדימויות שלהם.",
+                                    "In the Keys screen you can also drag and drop keys to reorder priorities."
                                 ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant

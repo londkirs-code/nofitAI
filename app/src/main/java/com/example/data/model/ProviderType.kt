@@ -203,5 +203,54 @@ enum class ProviderType(
         keyHint = "מפתח API מותאם אישית...",
         documentationUrl = "הגדרת שרת API מותאם אישית",
         apiKeysWebUrl = "https://openrouter.ai/keys"
-    )
+    );
+
+    companion object {
+        /**
+         * Automatically detects the AI provider from the raw API key string and optional context hint.
+         * Users can always manually override the selected provider after auto-detection.
+         */
+        fun detectProviderFromKey(rawKey: String, contextHint: String = ""): ProviderType? {
+            val k = rawKey.trim()
+            if (k.length < 8) return null
+            val hintLower = contextHint.lowercase()
+
+            return when {
+                k.startsWith("AIza") -> GEMINI
+                k.startsWith("sk-or-") -> OPENROUTER
+                k.startsWith("gsk_") -> GROQ
+                k.startsWith("sk-ant-") -> CLAUDE
+                k.startsWith("xai-") -> GROK
+                k.startsWith("hf_") -> HUGGINGFACE
+                k.startsWith("sk-proj-") || k.startsWith("sk-svcacct-") || k.startsWith("sk-None-") -> OPENAI
+                k.startsWith("sk-") -> {
+                    val afterPrefix = k.removePrefix("sk-")
+                    val isHexOnly = afterPrefix.length in 30..36 && afterPrefix.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }
+                    when {
+                        hintLower.contains("openrouter") -> OPENROUTER
+                        hintLower.contains("deepseek") || isHexOnly -> DEEPSEEK
+                        hintLower.contains("claude") || hintLower.contains("anthropic") -> CLAUDE
+                        hintLower.contains("custom") -> CUSTOM
+                        else -> OPENAI
+                    }
+                }
+                else -> {
+                    when {
+                        hintLower.contains("gemini") || hintLower.contains("google") -> GEMINI
+                        hintLower.contains("openrouter") -> OPENROUTER
+                        hintLower.contains("groq") -> GROQ
+                        hintLower.contains("claude") || hintLower.contains("anthropic") -> CLAUDE
+                        hintLower.contains("deepseek") -> DEEPSEEK
+                        hintLower.contains("grok") || hintLower.contains("xai") -> GROK
+                        hintLower.contains("mistral") -> MISTRAL
+                        hintLower.contains("huggingface") || hintLower.contains("hf") -> HUGGINGFACE
+                        hintLower.contains("openai") || hintLower.contains("gpt") -> OPENAI
+                        k.length == 32 && k.all { it.isLetterOrDigit() } -> MISTRAL
+                        else -> null
+                    }
+                }
+            }
+        }
+    }
 }
+
