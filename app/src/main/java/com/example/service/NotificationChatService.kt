@@ -29,7 +29,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.util.concurrent.atomic.AtomicInteger
 
 data class DisplayMessage(
     val senderName: String,
@@ -56,21 +55,32 @@ class NotificationChatService : Service() {
         when (action) {
             ACTION_STOP_SERVICE -> {
                 isRunning = false
-                clearAllResponseNotificationsInternal()
+                getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", false)
+                    .apply()
                 stopForeground(STOP_FOREGROUND_REMOVE)
+                notificationManager.cancel(NOTIFICATION_ID)
                 stopSelf()
                 return START_NOT_STICKY
             }
             ACTION_PROCESS_REPLY -> {
+                isRunning = true
+                getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", true)
+                    .apply()
+                ensureForeground(isThinking = true)
                 val queryText = intent.getStringExtra(EXTRA_REPLY_TEXT).orEmpty()
                 val attachmentUriString = intent.getStringExtra(EXTRA_ATTACHMENT_URI)
                 val attachmentUri = attachmentUriString?.let { Uri.parse(it) }
                 if (queryText.isNotBlank() || attachmentUri != null) {
                     processIncomingQuery(queryText, attachmentUri)
+                } else {
+                    updateMainNotification(isThinking = false)
                 }
             }
             ACTION_CLEAR_CHAT -> {
-                clearAllResponseNotificationsInternal()
                 synchronized(chatHistory) {
                     chatHistory.clear()
                     latestFullResponse = ""
@@ -85,29 +95,36 @@ class NotificationChatService : Service() {
                 updateMainNotification(isThinking = false)
             }
             else -> {
-                // Initial start or refresh
-                try {
-                    val initialNotification = buildMainNotification(isThinking = false)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            startForeground(
-                                NOTIFICATION_ID,
-                                initialNotification,
-                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                            )
-                        } else {
-                            startForeground(NOTIFICATION_ID, initialNotification)
-                        }
-                    } else {
-                        startForeground(NOTIFICATION_ID, initialNotification)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                isRunning = true
+                getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", true)
+                    .apply()
+                ensureForeground(isThinking = false)
             }
         }
 
         return START_STICKY
+    }
+
+    private fun ensureForeground(isThinking: Boolean) {
+        try {
+            val notification = buildMainNotification(isThinking = isThinking)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            try {
+                notificationManager.notify(NOTIFICATION_ID, buildMainNotification(isThinking))
+            } catch (_: Exception) {}
+        }
     }
 
     private fun processIncomingQuery(query: String, attachmentUri: Uri?) {
@@ -147,7 +164,7 @@ class NotificationChatService : Service() {
             )
         }
 
-        // Show thinking status immediately in the main persistent notification
+        // Replace the single persistent notification with thinking status
         updateMainNotification(isThinking = true)
 
         serviceScope.launch {
@@ -163,15 +180,15 @@ class NotificationChatService : Service() {
                     attachmentUri = attachmentUri
                 )
 
-                latestFullResponse = result.responseText
-                latestModelUsed = "${result.provider.displayName} (${result.model})"
-
                 val responseSnippet = buildString {
                     append(result.responseText)
                     if (result.fallbackOccurred) {
                         append("\n\n(ℹ️ ${result.fallbackReason ?: "מענה ממפתח חלופי"})")
                     }
                 }
+
+                latestFullResponse = responseSnippet
+                latestModelUsed = "${result.provider.displayName} • ${result.model}"
 
                 synchronized(chatHistory) {
                     chatHistory.add(
@@ -182,43 +199,32 @@ class NotificationChatService : Service() {
                             isBot = true
                         )
                     )
-                    if (chatHistory.size > 20) {
+                    if (chatHistory.size > 30) {
                         chatHistory.removeAt(0)
                     }
                 }
 
-                // Update the main persistent notification back to idle
+                // Replace the single notification with the new AI response silently
                 updateMainNotification(isThinking = false)
-
-                // Post a separate DISMISSIBLE notification for this dialogue/response
-                postResponseNotification(
-                    userQuery = displayUserText,
-                    responseText = responseSnippet,
-                    modelName = latestModelUsed
-                )
 
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "שגיאה לא צפויה"
-                latestFullResponse = errorMsg
+                latestFullResponse = "⚠️ שגיאה בקבלת תשובה: $errorMsg"
+                latestModelUsed = "שגיאה"
 
                 synchronized(chatHistory) {
                     chatHistory.add(
                         DisplayMessage(
                             senderName = "NotifAI",
-                            text = "⚠️ $errorMsg",
+                            text = latestFullResponse,
                             timestamp = System.currentTimeMillis(),
                             isBot = true
                         )
                     )
                 }
 
+                // Replace the single notification with the error message silently
                 updateMainNotification(isThinking = false)
-
-                postResponseNotification(
-                    userQuery = displayUserText,
-                    responseText = "⚠️ שגיאה בקבלת תשובה: $errorMsg",
-                    modelName = "שגיאה"
-                )
             }
         }
     }
@@ -229,11 +235,11 @@ class NotificationChatService : Service() {
     }
 
     /**
-     * Builds the SINGLE persistent main notification.
-     * Contains the RemoteInput field, fast actions, and cannot be swiped away (ongoing = true).
+     * Builds the SINGLE, highest-priority, silent, non-deletable notification.
+     * Always replaces itself in place (never spawns extra notifications).
      */
     private fun buildMainNotification(isThinking: Boolean): Notification {
-        // Inline Reply RemoteInput
+        // 1. Inline Reply Action ("שאל AI")
         val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
             .setLabel("הקלד שאלה ל-NotifAI…")
             .build()
@@ -256,9 +262,10 @@ class NotificationChatService : Service() {
             .setAllowGeneratedReplies(true)
             .build()
 
-        // Attach Content Dialog Action (Screenshot, Voice Record, Hebrew STT, File Upload)
+        // 2. Send Content Dialog Action ("✨ שלח תוכן")
         val attachDialogIntent = Intent(this, AttachContentDialogActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ATTACH)
         }
         val attachDialogPendingIntent = PendingIntent.getActivity(
             this,
@@ -272,7 +279,24 @@ class NotificationChatService : Service() {
             attachDialogPendingIntent
         ).build()
 
-        // Chat Dialog Independent Viewer Action
+        // 3. Actions Popup Dialog Action ("⚙️ פעולות" - Copy, Share, Select/Edit Models, Close Notification)
+        val actionsDialogIntent = Intent(this, AttachContentDialogActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ACTIONS)
+        }
+        val actionsDialogPendingIntent = PendingIntent.getActivity(
+            this,
+            107,
+            actionsDialogIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val actionsButtonAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_manage,
+            "⚙️ פעולות",
+            actionsDialogPendingIntent
+        ).build()
+
+        // Content Click -> Full Conversation Dialog (ChatDialogActivity)
         val chatDialogIntent = Intent(this, ChatDialogActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -282,48 +306,50 @@ class NotificationChatService : Service() {
             chatDialogIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val fullViewAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_view,
-            "💬 חלון שיחה",
-            chatDialogPendingIntent
-        ).build()
 
-        // Clear All Responses Action
-        val clearAllPendingIntent = PendingIntent.getBroadcast(
-            this,
-            105,
-            Intent(this, NotificationActionReceiver::class.java).apply {
-                action = NotificationActionReceiver.ACTION_CLEAR_ALL_NOTIFICATIONS
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val clearAllAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_rotate,
-            "🧹 נקה הכל",
-            clearAllPendingIntent
-        ).build()
-
-        // Share Action (shares the latest AI response anywhere)
-        val shareBroadcastIntent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = NotificationActionReceiver.ACTION_SHARE_RESPONSE
+        // Delete Intent -> Immediately restores the notification if the user tries to swipe it away on Android 14+
+        val restoreIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+            action = NotificationActionReceiver.ACTION_RESTORE_NOTIFICATION
         }
-        val sharePendingIntent = PendingIntent.getBroadcast(
+        val restorePendingIntent = PendingIntent.getBroadcast(
             this,
-            106,
-            shareBroadcastIntent,
+            108,
+            restoreIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val shareAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_share,
-            "📤 שתף",
-            sharePendingIntent
-        ).build()
 
-        val mainTitle = "NotifAI • שדה שאלה ישיר ל-AI"
-        val mainText = when {
-            isThinking -> "NotifAI מקליד תשובה לשאלתך… ✍️"
-            latestUserPrompt.isNotBlank() -> "שאלה אחרונה: \"${latestUserPrompt.take(45)}\" • הקלד שאלה נוספת"
-            else -> "הקלד שאלה ישירות בהתראה או לחץ 'שלח תוכן' ⚡"
+        val mainTitle: String
+        val collapsedText: String
+        val expandedBigText: String
+        val summaryLine: String
+
+        when {
+            isThinking -> {
+                mainTitle = "🤖 NotifAI מקליד תשובה…"
+                collapsedText = "מעבד את שאלתך: \"${latestUserPrompt.take(60)}\" ⏳"
+                expandedBigText = "שאלה: $latestUserPrompt\n\n⏳ NotifAI חושב ומנסח תשובה מלאה…"
+                summaryLine = "מעבד תשובה…"
+            }
+            latestFullResponse.isNotBlank() -> {
+                mainTitle = if (latestModelUsed.isNotBlank()) {
+                    "🤖 NotifAI ($latestModelUsed)"
+                } else {
+                    "🤖 NotifAI • תשובה אחרונה"
+                }
+                collapsedText = latestFullResponse.replace("\n", " ").take(120)
+                expandedBigText = latestFullResponse
+                summaryLine = if (latestUserPrompt.isNotBlank()) {
+                    "שאלה: ${latestUserPrompt.take(40)} • לחץ לשיחה המלאה"
+                } else {
+                    "לחץ לפתיחת הדו-שיח המלא"
+                }
+            }
+            else -> {
+                mainTitle = "NotifAI • שדה שאלה ישיר ל-AI"
+                collapsedText = "הקלד שאלה ישירות בהתראה או לחץ 'שלח תוכן' ⚡"
+                expandedBigText = "הקלד שאלה בשדה למטה ('שאל AI'), שלח צילום מסך/קול דרך 'שלח תוכן', או נהל מודלים ופעולות דרך 'פעולות'."
+                summaryLine = "התראה קבועה • לחץ לפתיחת הדו-שיח"
+            }
         }
 
         val largeAvatar = try {
@@ -336,190 +362,56 @@ class NotificationChatService : Service() {
                 if (largeAvatar != null) setLargeIcon(largeAvatar)
             }
             .setContentTitle(mainTitle)
-            .setContentText(mainText)
+            .setContentText(collapsedText)
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .setBigContentTitle(mainTitle)
-                    .bigText(mainText)
-                    .setSummaryText("התראה קבועה עם שדה הזנה")
+                    .bigText(expandedBigText)
+                    .setSummaryText(summaryLine)
             )
-            .setOngoing(true) // Crucial: ONLY the main input notification is ongoing!
+            .setOngoing(true)
             .setAutoCancel(false)
-            .setContentIntent(chatDialogPendingIntent)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setSound(null)
+            .setVibrate(longArrayOf(0L))
+            .setDefaults(0)
             .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(chatDialogPendingIntent)
+            .setDeleteIntent(restorePendingIntent)
             .setColor(Color.parseColor("#38BDF8"))
             .addAction(replyAction)
             .addAction(sendContentAction)
-            .addAction(shareAction)
+            .addAction(actionsButtonAction)
             .build()
-    }
-
-    /**
-     * Posts a separate DISMISSIBLE notification for a dialogue response.
-     * The user CAN swipe it away, tap to dismiss, or reply inline directly.
-     */
-    private fun postResponseNotification(userQuery: String, responseText: String, modelName: String) {
-        val notifId = responseIdGenerator.incrementAndGet()
-        synchronized(activeResponseIds) {
-            activeResponseIds.add(notifId)
-        }
-
-        // Open Dialog PendingIntent
-        val chatDialogIntent = Intent(this, ChatDialogActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val chatDialogPendingIntent = PendingIntent.getActivity(
-            this,
-            notifId * 10 + 1,
-            chatDialogIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        // Inline Reply directly on the response notification
-        val responseRemoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
-            .setLabel("הקלד שאלת המשך…")
-            .build()
-        val responseReplyIntent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = NotificationActionReceiver.ACTION_DIRECT_REPLY
-            putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, notifId)
-        }
-        val responseReplyPendingIntent = PendingIntent.getBroadcast(
-            this,
-            notifId * 10 + 5,
-            responseReplyIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-        val responseReplyAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_send,
-            "💬 השב",
-            responseReplyPendingIntent
-        )
-            .addRemoteInput(responseRemoteInput)
-            .setAllowGeneratedReplies(true)
-            .build()
-
-        // Copy PendingIntent
-        val copyIntent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = NotificationActionReceiver.ACTION_COPY_RESPONSE
-            putExtra(NotificationActionReceiver.EXTRA_RESPONSE_TEXT, responseText)
-        }
-        val copyPendingIntent = PendingIntent.getBroadcast(
-            this,
-            notifId * 10 + 2,
-            copyIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val copyAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_save,
-            "📋 העתק",
-            copyPendingIntent
-        ).build()
-
-        // Share this specific response PendingIntent
-        val responseShareIntent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = NotificationActionReceiver.ACTION_SHARE_RESPONSE
-            putExtra(NotificationActionReceiver.EXTRA_RESPONSE_TEXT, responseText)
-        }
-        val responseSharePendingIntent = PendingIntent.getBroadcast(
-            this,
-            notifId * 10 + 4,
-            responseShareIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val responseShareAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_share,
-            "📤 שתף",
-            responseSharePendingIntent
-        ).build()
-
-        // Dismiss this specific notification PendingIntent
-        val dismissIntent = Intent(this, NotificationActionReceiver::class.java).apply {
-            action = NotificationActionReceiver.ACTION_DISMISS_NOTIFICATION
-            putExtra(NotificationActionReceiver.EXTRA_NOTIFICATION_ID, notifId)
-        }
-        val dismissPendingIntent = PendingIntent.getBroadcast(
-            this,
-            notifId * 10 + 3,
-            dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val responseTitle = "🤖 NotifAI ($modelName)"
-        val summaryPrompt = "שאלה: ${userQuery.take(30)}"
-
-        val largeAvatar = try {
-            BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset)
-        } catch (_: Exception) { null }
-
-        val responseNotification = NotificationCompat.Builder(this, CHANNEL_RESPONSES_ID)
-            .setSmallIcon(R.drawable.ic_stat_notifai_bell)
-            .apply {
-                if (largeAvatar != null) setLargeIcon(largeAvatar)
-            }
-            .setContentTitle(responseTitle)
-            .setContentText(responseText.take(80))
-            .setStyle(
-                NotificationCompat.BigTextStyle()
-                    .setBigContentTitle(responseTitle)
-                    .setSummaryText(summaryPrompt)
-                    .bigText(responseText)
-            )
-            .setOngoing(false) // Crucial: DISMISSIBLE, user can swipe it away!
-            .setAutoCancel(true) // Crucial: disappears when tapped
-            .setDeleteIntent(dismissPendingIntent) // Cleans tracking set when swiped away
-            .setContentIntent(chatDialogPendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setColor(Color.parseColor("#38BDF8"))
-            .addAction(responseReplyAction)
-            .addAction(copyAction)
-            .addAction(responseShareAction)
-            .build()
-
-        notificationManager.notify(notifId, responseNotification)
-    }
-
-    private fun clearAllResponseNotificationsInternal() {
-        synchronized(activeResponseIds) {
-            for (id in activeResponseIds) {
-                try {
-                    notificationManager.cancel(id)
-                } catch (_: Exception) {}
-            }
-            activeResponseIds.clear()
-        }
     }
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Delete legacy channels so old sound/vibration settings are completely purged
+            try {
+                notificationManager.deleteNotificationChannel("notifai_chat_channel")
+                notificationManager.deleteNotificationChannel("notifai_responses_channel")
+            } catch (_: Exception) {}
+
             val mainChannel = NotificationChannel(
                 CHANNEL_MAIN_ID,
-                "התראת NotifAI קבועה (שדה הזנה)",
+                "התראת NotifAI קבועה ושקטה",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "התראה קבועה עם שדה הזנה וכפתורי פעולה לשאילת AI"
-                enableLights(true)
-                lightColor = Color.CYAN
+                description = "התראה יחידה וקבועה בעדיפות עליונה ללא צליל או רטט"
+                setSound(null, null)
+                enableVibration(false)
+                vibrationPattern = longArrayOf(0L)
+                enableLights(false)
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
 
-            val responsesChannel = NotificationChannel(
-                CHANNEL_RESPONSES_ID,
-                "תשובות ודו-שיח NotifAI (ניתנות למחיקה)",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "התראות המענה של ה-AI שניתן להחליק, למחוק או להעתיק"
-                enableLights(true)
-                lightColor = Color.GREEN
-                enableVibration(true)
-                setShowBadge(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
-
             notificationManager.createNotificationChannel(mainChannel)
-            notificationManager.createNotificationChannel(responsesChannel)
         }
     }
 
@@ -536,8 +428,7 @@ class NotificationChatService : Service() {
             internal set
 
         const val NOTIFICATION_ID = 9001
-        const val CHANNEL_MAIN_ID = "notifai_chat_channel"
-        const val CHANNEL_RESPONSES_ID = "notifai_responses_channel"
+        const val CHANNEL_MAIN_ID = "notifai_single_silent_max_v3"
 
         const val KEY_TEXT_REPLY = "key_text_reply"
         const val ACTION_PROCESS_REPLY = "com.example.notifai.ACTION_PROCESS_REPLY"
@@ -546,9 +437,6 @@ class NotificationChatService : Service() {
 
         const val EXTRA_REPLY_TEXT = "extra_reply_text"
         const val EXTRA_ATTACHMENT_URI = "extra_attachment_uri"
-
-        private val responseIdGenerator = AtomicInteger(10000)
-        private val activeResponseIds = mutableListOf<Int>()
 
         private val chatHistory = mutableListOf<DisplayMessage>()
         var latestFullResponse: String = ""
@@ -560,6 +448,10 @@ class NotificationChatService : Service() {
 
         fun startService(context: Context) {
             try {
+                context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", true)
+                    .apply()
                 val intent = Intent(context, NotificationChatService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent)
@@ -574,6 +466,10 @@ class NotificationChatService : Service() {
         fun stopService(context: Context) {
             isRunning = false
             try {
+                context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", false)
+                    .apply()
                 val intent = Intent(context, NotificationChatService::class.java).apply {
                     action = ACTION_STOP_SERVICE
                 }
@@ -585,6 +481,10 @@ class NotificationChatService : Service() {
 
         fun sendQueryToService(context: Context, query: String, attachmentUri: Uri? = null) {
             try {
+                context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("service_enabled", true)
+                    .apply()
                 val intent = Intent(context, NotificationChatService::class.java).apply {
                     action = ACTION_PROCESS_REPLY
                     putExtra(EXTRA_REPLY_TEXT, query)
@@ -603,25 +503,17 @@ class NotificationChatService : Service() {
         fun copyText(context: Context, text: String) {
             val content = text.ifBlank { latestFullResponse }
             if (content.isBlank()) {
-                Toast.makeText(context, "אין טקסט זמין להעתקה", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "אין עדיין תשובה זמינה להעתקה", Toast.LENGTH_SHORT).show()
                 return
             }
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("NotifAI", content)
             clipboard.setPrimaryClip(clip)
-            Toast.makeText(context, "הטקסט הועתק ללוח! 📋", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "התשובה הועתקה ללוח! 📋", Toast.LENGTH_SHORT).show()
         }
 
         fun dismissResponseNotification(context: Context, notifId: Int) {
-            try {
-                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                nm.cancel(notifId)
-                synchronized(activeResponseIds) {
-                    activeResponseIds.remove(notifId)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            // Single notification architecture: no separate response notifications exist
         }
 
         fun clearAllResponses(context: Context) {

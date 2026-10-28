@@ -31,15 +31,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -77,14 +75,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.data.security.AppLockManager
 import com.example.service.NotificationChatService
 import com.example.ui.screens.ApiKeysScreen
-import com.example.ui.screens.AppLockScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.NotificationCenterScreen
 import com.example.ui.screens.SecuritySettingsScreen
-import com.example.ui.screens.SetupPinDialog
 import com.example.ui.theme.NotifAiTheme
 import com.example.ui.viewmodel.NotifAiViewModel
 
@@ -97,7 +92,7 @@ enum class NavTab(
     NOTIFICATION("התראה", Icons.Filled.NotificationsActive, Icons.Outlined.Notifications, "nav_notification"),
     KEYS("מפתחות", Icons.Filled.Key, Icons.Outlined.Key, "nav_keys"),
     HISTORY("היסטוריה", Icons.Filled.History, Icons.Outlined.History, "nav_history"),
-    SECURITY("אבטחה", Icons.Filled.Security, Icons.Outlined.Security, "nav_security")
+    SECURITY("הגדרות", Icons.Filled.Settings, Icons.Outlined.Settings, "nav_security")
 }
 
 class MainActivity : ComponentActivity() {
@@ -106,9 +101,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Explicitly clear FLAG_SECURE so streaming emulator and browser display render immediately
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        AppLockManager.setBlockScreenshots(this, false)
 
         setContent {
             NotifAiTheme {
@@ -147,18 +140,27 @@ fun MainAppContent(
     val isServiceActive by viewModel.isServiceActive.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var isAppLocked by remember { mutableStateOf(AppLockManager.isLockEnabled(context)) }
-    var showQuickSetupPinDialog by remember { mutableStateOf(false) }
+    // Android 13+ Notification permission request
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            viewModel.toggleService(true)
+            Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "שים לב: ללא הרשאת התראות, NotifAI לא יוכל לפעול בהתראה", Toast.LENGTH_LONG).show()
+        }
+    }
 
-    // Auto-lock when app goes to background & sync service state on resume
+    // Automatically activate the notification every time the user enters/opens the app
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                if (AppLockManager.isLockEnabled(context) && AppLockManager.isAutoLockOnBackground(context)) {
-                    isAppLocked = true
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val hasPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                if (hasPermission) {
+                    viewModel.toggleService(true)
                 }
-            } else if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.syncServiceActiveState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -167,23 +169,15 @@ fun MainAppContent(
         }
     }
 
-    // Android 13+ Notification permission request
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            NotificationChatService.startService(context)
-            Toast.makeText(context, "התראות NotifAI הופעלו בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "שים לב: ללא הרשאת התראות, NotifAI לא יוכל לפעול בהתראה", Toast.LENGTH_LONG).show()
-        }
-    }
-
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                viewModel.toggleService(true)
             }
+        } else {
+            viewModel.toggleService(true)
         }
 
         // Handle shared text/media from Intent.ACTION_SEND
@@ -216,13 +210,6 @@ fun MainAppContent(
         }
     }
 
-    if (isAppLocked) {
-        AppLockScreen(
-            onUnlocked = { isAppLocked = false }
-        )
-        return
-    }
-
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -249,13 +236,8 @@ fun MainAppContent(
                 actions = {
                     IconButton(
                         onClick = {
-                            if (!isServiceActive) {
-                                viewModel.toggleService(true)
-                                Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
-                            } else {
-                                NotificationChatService.startService(context)
-                                Toast.makeText(context, "ההתראה רועננה מחדש! 🔔", Toast.LENGTH_SHORT).show()
-                            }
+                            viewModel.toggleService(true)
+                            Toast.makeText(context, "התראת NotifAI פעילה ומרועננת! 🔔", Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.testTag("top_bar_notification_action_btn")
                     ) {
@@ -263,25 +245,6 @@ fun MainAppContent(
                             imageVector = if (isServiceActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
                             contentDescription = if (isServiceActive) "רענן התראה" else "הפעל התראה",
                             tint = if (isServiceActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        )
-                    }
-
-                    val lockConfigured = AppLockManager.isLockEnabled(context)
-                    IconButton(
-                        onClick = {
-                            if (AppLockManager.hasPin(context)) {
-                                AppLockManager.setLockEnabled(context, true)
-                                isAppLocked = true
-                            } else {
-                                showQuickSetupPinDialog = true
-                            }
-                        },
-                        modifier = Modifier.testTag("top_bar_lock_btn")
-                    ) {
-                        Icon(
-                            imageVector = if (lockConfigured) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (lockConfigured) "נעל אפליקציה" else "הגדר קוד נעילה",
-                            tint = if (lockConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
@@ -335,20 +298,9 @@ fun MainAppContent(
                     NavTab.NOTIFICATION -> NotificationCenterScreen(viewModel = viewModel)
                     NavTab.KEYS -> ApiKeysScreen(viewModel = viewModel)
                     NavTab.HISTORY -> HistoryScreen(viewModel = viewModel)
-                    NavTab.SECURITY -> SecuritySettingsScreen(
-                        viewModel = viewModel,
-                        onLockAppNow = { isAppLocked = true }
-                    )
+                    NavTab.SECURITY -> SecuritySettingsScreen(viewModel = viewModel)
                 }
             }
         }
-    }
-
-    if (showQuickSetupPinDialog) {
-        SetupPinDialog(
-            hasExistingPin = AppLockManager.hasPin(context),
-            onDismiss = { showQuickSetupPinDialog = false },
-            onPinSaved = { showQuickSetupPinDialog = false }
-        )
     }
 }

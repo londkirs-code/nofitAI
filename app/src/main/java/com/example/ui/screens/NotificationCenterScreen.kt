@@ -399,10 +399,10 @@ fun NotificationCenterScreen(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "1. משוך את וילון ההתראות של אנדרואיד בכל רגע נתון.\n" +
-                            "2. הקש על 'שאל AI' או כתוב ישירות בשורת ההזנה בהתראה של NotifAI.\n" +
-                            "3. לחץ על 'שלח' — ה-AI ישיב ישירות בהתראה ללא צורך בפתיחת האפליקציה!\n" +
-                            "4. לחץ על 'העתק' או 'תשובה מלאה' לקבלת התשובה בשלמותה.",
+                    text = "1. בכל כניסה לאפליקציה, התראת NotifAI מופעלת אוטומטית בעדיפות עליונה וללא צליל/רטט.\n" +
+                            "2. הקש על 'שאל AI' או כתוב ישירות בשורת ההזנה בהתראה.\n" +
+                            "3. התשובה תוצג ישירות באותה התראה (תמיד התראה אחת בלבד!).\n" +
+                            "4. לחץ על '⚙️ פעולות' בהתראה להעתקה, שיתוף, החלפה/עריכת מודלים או סגירת ההתראה.",
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -566,19 +566,41 @@ fun NotificationCenterScreen(
                     }
                 }
 
-                OutlinedButton(
-                    onClick = {
-                        val attachIntent = Intent(context, AttachContentDialogActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-                        context.startActivity(attachIntent)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp)
-                        .testTag("open_attach_content_dialog_btn")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("✨ חלונית 'שלח תוכן' (הקלטה • דיבור בעברית • קבצים)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    OutlinedButton(
+                        onClick = {
+                            val attachIntent = Intent(context, AttachContentDialogActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ATTACH)
+                            }
+                            context.startActivity(attachIntent)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("open_attach_content_dialog_btn")
+                    ) {
+                        Text("✨ שלח תוכן", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val actionsIntent = Intent(context, AttachContentDialogActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ACTIONS)
+                            }
+                            context.startActivity(actionsIntent)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .testTag("open_actions_dialog_btn")
+                    ) {
+                        Text("⚙️ פעולות ומודלים", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))

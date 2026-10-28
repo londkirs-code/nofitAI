@@ -165,12 +165,18 @@ class AiRepository(
 
             try {
                 val baseSysPrompt = keyEntity.systemPrompt?.takeIf { it.isNotBlank() }
-                    ?: "You are NotifAI, a helpful and concise AI assistant. You answer in Hebrew or the language asked. When answering for notifications, keep key points clear and easy to read."
+                    ?: "You are NotifAI, a smart and helpful AI assistant. Always respond in fluent Hebrew (unless asked otherwise) with complete, detailed, and well-structured answers. Never cut off or truncate your response."
 
                 val effectiveSystemInstruction = if (crossConversationContext.isNotBlank()) {
                     "$baseSysPrompt\n\nהנה מידע והקשר משיחות קודמות שקיימת עם המשתמש בעבר (השתמש במידע זה כדי לענות על שאלותיו על העבר):\n$crossConversationContext"
                 } else {
                     baseSysPrompt
+                }
+
+                val effectiveMaxTokens = if (keyEntity.provider == ProviderType.OPENROUTER) {
+                    maxOf(keyEntity.maxTokens, 8192)
+                } else {
+                    maxOf(keyEntity.maxTokens, 4096)
                 }
 
                 val response: AiResponse = apiClient.queryAi(
@@ -181,7 +187,7 @@ class AiRepository(
                     history = historyTurns,
                     systemInstruction = effectiveSystemInstruction,
                     temperature = keyEntity.temperature,
-                    maxTokens = keyEntity.maxTokens,
+                    maxTokens = effectiveMaxTokens,
                     attachment = attachment
                 )
 
@@ -350,6 +356,23 @@ class AiRepository(
         val p2 = key2.priority
         apiKeyDao.updatePriority(key1.id, p2)
         apiKeyDao.updatePriority(key2.id, p1)
+    }
+
+    suspend fun setKeyAsPrimary(keyId: String) {
+        val allKeys = apiKeyDao.getAllKeysFlow()
+        val target = apiKeyDao.getKeyById(keyId) ?: return
+        // Enable target and set priority = 1, shifting other enabled keys accordingly
+        val enabledKeys = apiKeyDao.getEnabledKeys().filter { it.id != keyId }.sortedBy { it.priority }
+        apiKeyDao.update(target.copy(isEnabled = true, priority = 1))
+        enabledKeys.forEachIndexed { index, keyEntity ->
+            apiKeyDao.updatePriority(keyEntity.id, index + 2)
+        }
+    }
+
+    suspend fun getLatestAssistantResponse(): String {
+        val latestConv = chatDao.getLatestConversation() ?: return ""
+        val msgs = chatDao.getMessagesForConversation(latestConv.id)
+        return msgs.lastOrNull { it.role == "assistant" }?.content.orEmpty()
     }
 
     suspend fun deleteConversation(id: Long) {

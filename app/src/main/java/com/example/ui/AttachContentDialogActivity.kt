@@ -52,17 +52,29 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,6 +95,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -106,9 +119,13 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.NotifAiApplication
+import com.example.data.model.AiModelInfo
+import com.example.data.model.ApiKeyEntity
 import com.example.receiver.NotificationActionReceiver
 import com.example.service.FastScreenCaptureAccessibilityService
 import com.example.service.NotificationChatService
+import com.example.ui.dialogs.AddKeyDialog
 import com.example.ui.theme.NotifAiTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -117,6 +134,7 @@ import java.util.Locale
 
 enum class AttachDialogMode {
     MENU,
+    ACTIONS,
     VOICE_RECORD,
     SPEECH_TO_TEXT,
     FILE_SELECTED
@@ -124,27 +142,51 @@ enum class AttachDialogMode {
 
 class AttachContentDialogActivity : ComponentActivity() {
 
+    private var initialModeState by mutableStateOf(AttachDialogMode.MENU)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initialModeState = resolveModeFromIntent(intent)
 
         setContent {
             NotifAiTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
                     AttachContentDialogScreen(
+                        initialMode = initialModeState,
                         onDismiss = { finish() }
                     )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        initialModeState = resolveModeFromIntent(intent)
+    }
+
+    private fun resolveModeFromIntent(intent: Intent?): AttachDialogMode {
+        return when (intent?.getStringExtra(EXTRA_INITIAL_MODE)) {
+            MODE_ACTIONS -> AttachDialogMode.ACTIONS
+            else -> AttachDialogMode.MENU
+        }
+    }
+
+    companion object {
+        const val EXTRA_INITIAL_MODE = "extra_initial_mode"
+        const val MODE_ATTACH = "mode_attach"
+        const val MODE_ACTIONS = "mode_actions"
+    }
 }
 
 @Composable
 fun AttachContentDialogScreen(
+    initialMode: AttachDialogMode = AttachDialogMode.MENU,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var currentMode by remember { mutableStateOf(AttachDialogMode.MENU) }
+    var currentMode by remember(initialMode) { mutableStateOf(initialMode) }
     var showCloseNotificationConfirm by remember { mutableStateOf(false) }
 
     // Selected file state
@@ -182,7 +224,7 @@ fun AttachContentDialogScreen(
             },
             text = {
                 Text(
-                    text = "האם אתה בטוח שברצונך לסגור ולהסיר את התראת NotifAI מווילון ההתראות?\n\nתוכל להפעיל אותה שוב בכל עת מתוך האפליקציה.",
+                    text = "האם אתה בטוח שברצונך לסגור ולהסיר את התראת NotifAI מווילון ההתראות?\n\nהתראה זו תופעל שוב אוטומטית בכניסה הבאה לאפליקציה.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -215,8 +257,8 @@ fun AttachContentDialogScreen(
     }
 
     BackHandler {
-        if (currentMode != AttachDialogMode.MENU) {
-            currentMode = AttachDialogMode.MENU
+        if (currentMode != initialMode && currentMode != AttachDialogMode.MENU && currentMode != AttachDialogMode.ACTIONS) {
+            currentMode = initialMode
         } else {
             onDismiss()
         }
@@ -255,7 +297,7 @@ fun AttachContentDialogScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (currentMode != AttachDialogMode.MENU) {
+                        if (currentMode != AttachDialogMode.MENU && currentMode != AttachDialogMode.ACTIONS) {
                             IconButton(
                                 onClick = { currentMode = AttachDialogMode.MENU },
                                 modifier = Modifier
@@ -286,6 +328,7 @@ fun AttachContentDialogScreen(
                             Icon(
                                 imageVector = when (currentMode) {
                                     AttachDialogMode.MENU -> Icons.Default.AttachFile
+                                    AttachDialogMode.ACTIONS -> Icons.Default.Settings
                                     AttachDialogMode.VOICE_RECORD -> Icons.Default.Mic
                                     AttachDialogMode.SPEECH_TO_TEXT -> Icons.Default.RecordVoiceOver
                                     AttachDialogMode.FILE_SELECTED -> Icons.Default.InsertDriveFile
@@ -300,6 +343,7 @@ fun AttachContentDialogScreen(
                             Text(
                                 text = when (currentMode) {
                                     AttachDialogMode.MENU -> "שלח תוכן ל-NotifAI"
+                                    AttachDialogMode.ACTIONS -> "פעולות וניהול מודלים"
                                     AttachDialogMode.VOICE_RECORD -> "הקלטת קול ישירה"
                                     AttachDialogMode.SPEECH_TO_TEXT -> "דיבור לטקסט בעברית"
                                     AttachDialogMode.FILE_SELECTED -> "העלאת קובץ מצורף"
@@ -310,6 +354,7 @@ fun AttachContentDialogScreen(
                             Text(
                                 text = when (currentMode) {
                                     AttachDialogMode.MENU -> "בחר כיצד להזין תוכן ל-AI"
+                                    AttachDialogMode.ACTIONS -> "העתקה, שיתוף, בחירת מודל או סגירת התראה"
                                     AttachDialogMode.VOICE_RECORD -> "הקלט שמע ושלח לפענוח"
                                     AttachDialogMode.SPEECH_TO_TEXT -> "המרת קול לטקסט בזמן אמת"
                                     AttachDialogMode.FILE_SELECTED -> "אישור ושליחה"
@@ -374,10 +419,16 @@ fun AttachContentDialogScreen(
                                     } catch (e: Exception) {
                                         Toast.makeText(context, "שגיאה בפתיחת בורר הקבצים", Toast.LENGTH_SHORT).show()
                                     }
-                                },
+                                }
+                            )
+                        }
+
+                        AttachDialogMode.ACTIONS -> {
+                            ActionsPopupSection(
                                 onCloseNotificationClick = {
                                     showCloseNotificationConfirm = true
-                                }
+                                },
+                                onDismissPopup = onDismiss
                             )
                         }
 
@@ -452,8 +503,7 @@ private fun AttachMenuOptions(
     onScreenshotClick: () -> Unit,
     onVoiceRecordClick: () -> Unit,
     onSpeechToTextClick: () -> Unit,
-    onFileUploadClick: () -> Unit,
-    onCloseNotificationClick: () -> Unit
+    onFileUploadClick: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -502,16 +552,602 @@ private fun AttachMenuOptions(
             testTag = "attach_option_file",
             onClick = onFileUploadClick
         )
+    }
+}
 
-        // 5. סגור התראה
+@Composable
+private fun ActionsPopupSection(
+    onCloseNotificationClick: () -> Unit,
+    onDismissPopup: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember { (context.applicationContext as NotifAiApplication).aiRepository }
+    val allKeys by repository.allKeysFlow.collectAsState(initial = emptyList())
+    val sortedKeys = remember(allKeys) { allKeys.sortedBy { it.priority } }
+
+    var showAddOrEditKeyDialog by remember { mutableStateOf(false) }
+    var keyBeingEdited by remember { mutableStateOf<ApiKeyEntity?>(null) }
+
+    // State for quick model selector dialog for a specific key
+    var keyForQuickModelSelect by remember { mutableStateOf<ApiKeyEntity?>(null) }
+    var quickModelsList by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
+    var isFetchingQuickModels by remember { mutableStateOf(false) }
+    var quickModelSearchQuery by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 1. Copy & Share Row
+        Text(
+            text = "פעולות על התשובה האחרונה",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = {
+                    scope.launch {
+                        val text = NotificationChatService.latestFullResponse.ifBlank {
+                            repository.getLatestAssistantResponse()
+                        }
+                        if (text.isBlank()) {
+                            Toast.makeText(context, "אין עדיין תשובה זמינה להעתקה", Toast.LENGTH_SHORT).show()
+                        } else {
+                            NotificationChatService.copyText(context, text)
+                            onDismissPopup()
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("actions_copy_btn"),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("העתק", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    scope.launch {
+                        val text = NotificationChatService.latestFullResponse.ifBlank {
+                            repository.getLatestAssistantResponse()
+                        }
+                        if (text.isBlank()) {
+                            Toast.makeText(context, "אין עדיין תשובה זמינה לשיתוף", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, text)
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            val chooser = Intent.createChooser(shareIntent, "שתף תשובה מ-NotifAI").apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(chooser)
+                            onDismissPopup()
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("actions_share_btn"),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("שתף", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+
+        // 2. Direct Model Selection & Key Editing
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "בחירת מודל ועריכת מפתחות",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "החלף מודל פעיל או ערוך הגדרות ישירות מכאן",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    keyBeingEdited = null
+                    showAddOrEditKeyDialog = true
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .height(36.dp)
+                    .testTag("actions_add_key_btn"),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("הוסף מפתח", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        if (sortedKeys.isEmpty()) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "לא הוגדרו מפתחות API עדיין",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(
+                        onClick = {
+                            keyBeingEdited = null
+                            showAddOrEditKeyDialog = true
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("הוסף מפתח ובחר מודל")
+                    }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                sortedKeys.forEachIndexed { index, keyEntity ->
+                    val isPrimary = index == 0 && keyEntity.isEnabled
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isPrimary) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                width = if (isPrimary) 1.5.dp else 0.5.dp,
+                                color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Surface(
+                                        color = if (isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Text(
+                                            text = if (isPrimary) "פעיל #1" else "#${keyEntity.priority}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isPrimary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = keyEntity.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = keyEntity.provider.displayName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    if (!isPrimary) {
+                                        FilledTonalButton(
+                                            onClick = {
+                                                scope.launch {
+                                                    repository.setKeyAsPrimary(keyEntity.id)
+                                                    Toast.makeText(
+                                                        context,
+                                                        "הוחלף למודל ראשי: ${keyEntity.selectedModel} ⚡",
+                                                        Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier
+                                                .height(32.dp)
+                                                .testTag("set_primary_key_btn_${keyEntity.id}"),
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("בחר כפעיל", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .background(
+                                                    MaterialTheme.colorScheme.secondaryContainer,
+                                                    RoundedCornerShape(10.dp)
+                                                )
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.secondary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "ראשי",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            keyBeingEdited = keyEntity
+                                            showAddOrEditKeyDialog = true
+                                        },
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("edit_key_btn_${keyEntity.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Edit,
+                                            contentDescription = "ערוך מפתח ומודל",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Clickable Model Selector Bar
+                            OutlinedButton(
+                                onClick = {
+                                    keyForQuickModelSelect = keyEntity
+                                    quickModelSearchQuery = ""
+                                    quickModelsList = keyEntity.provider.suggestedModels.map {
+                                        AiModelInfo(it, it, isRecommended = true)
+                                    }
+                                    isFetchingQuickModels = true
+                                    scope.launch {
+                                        val res = repository.fetchModelsForKeyId(keyEntity.id)
+                                        if (res.models.isNotEmpty()) {
+                                            quickModelsList = res.models
+                                        }
+                                        isFetchingQuickModels = false
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("quick_model_picker_btn_${keyEntity.id}"),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Psychology,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "מודל: ${keyEntity.selectedModel}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "החלף מודל",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Icon(
+                                            Icons.Default.ArrowDropDown,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+
+        // 3. Close Notification Button (Moved from 'שלח תוכן')
         AttachOptionCard(
             title = "🛑 סגור התראה",
             subtitle = "הסר את התראת NotifAI מווילון ההתראות",
             badgeText = "הסרה",
             icon = Icons.Default.Close,
             accentColor = Color(0xFFDC2626),
-            testTag = "attach_option_close_notification",
+            testTag = "actions_close_notification_btn",
             onClick = onCloseNotificationClick
+        )
+    }
+
+    // Quick Model Picker Modal for a selected key
+    val targetKey = keyForQuickModelSelect
+    if (targetKey != null) {
+        val filteredModels = remember(quickModelsList, quickModelSearchQuery) {
+            if (quickModelSearchQuery.isBlank()) {
+                quickModelsList
+            } else {
+                quickModelsList.filter {
+                    it.id.contains(quickModelSearchQuery, ignoreCase = true) ||
+                        it.displayName.contains(quickModelSearchQuery, ignoreCase = true)
+                }
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { keyForQuickModelSelect = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "בחירת מודל • ${targetKey.name}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "ספק: ${targetKey.provider.displayName}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (isFetchingQuickModels) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = quickModelSearchQuery,
+                        onValueChange = { quickModelSearchQuery = it },
+                        label = { Text("חפש מודל או הקלד מזהה מודל...") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(280.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        filteredModels.forEach { modelInfo ->
+                            val isSelected = modelInfo.id == targetKey.selectedModel
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        scope.launch {
+                                            repository.updateKeyEntity(
+                                                targetKey.copy(
+                                                    selectedModel = modelInfo.id,
+                                                    isEnabled = true
+                                                )
+                                            )
+                                            repository.setKeyAsPrimary(targetKey.id)
+                                            Toast.makeText(
+                                                context,
+                                                "המודל עודכן ל-${modelInfo.id} והוגדר כפעיל! 🤖",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            keyForQuickModelSelect = null
+                                        }
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = modelInfo.displayName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (modelInfo.displayName != modelInfo.id) {
+                                            Text(
+                                                text = modelInfo.id,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    if (isSelected) {
+                                        Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "נבחר",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if (quickModelSearchQuery.isNotBlank() && filteredModels.none { it.id.equals(quickModelSearchQuery.trim(), ignoreCase = true) }) {
+                            OutlinedButton(
+                                onClick = {
+                                    val customModel = quickModelSearchQuery.trim()
+                                    scope.launch {
+                                        repository.updateKeyEntity(
+                                            targetKey.copy(
+                                                selectedModel = customModel,
+                                                isEnabled = true
+                                            )
+                                        )
+                                        repository.setKeyAsPrimary(targetKey.id)
+                                        Toast.makeText(
+                                            context,
+                                            "המודל המותאם '$customModel' נשמר והופעל! 🤖",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        keyForQuickModelSelect = null
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("השתמש במודל מותאם אישית: \"${quickModelSearchQuery.trim()}\"")
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { keyForQuickModelSelect = null }) {
+                    Text("סגור")
+                }
+            }
+        )
+    }
+
+    // Full Add / Edit Key & Playground Dialog inside the Actions popup
+    if (showAddOrEditKeyDialog) {
+        AddKeyDialog(
+            existingKey = keyBeingEdited,
+            nextPriority = (sortedKeys.maxOfOrNull { it.priority } ?: 0) + 1,
+            onFetchDetailedModels = { provider, rawKey ->
+                repository.fetchAvailableModelsDetailed(provider, rawKey)
+            },
+            onFetchDetailedModelsForExistingKey = { keyId ->
+                repository.fetchModelsForKeyId(keyId)
+            },
+            onDismiss = {
+                showAddOrEditKeyDialog = false
+                keyBeingEdited = null
+            },
+            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt ->
+                scope.launch {
+                    repository.saveApiKey(
+                        id = keyBeingEdited?.id,
+                        provider = provider,
+                        name = name,
+                        plainKey = rawKey,
+                        model = model,
+                        priority = priority,
+                        temperature = temperature,
+                        maxTokens = maxTokens,
+                        systemPrompt = systemPrompt
+                    )
+                    showAddOrEditKeyDialog = false
+                    keyBeingEdited = null
+                    Toast.makeText(context, "המפתח והמודל נשמרו בהצלחה! 🔐", Toast.LENGTH_SHORT).show()
+                }
+            }
         )
     }
 }

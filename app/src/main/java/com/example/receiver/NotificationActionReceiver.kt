@@ -15,12 +15,19 @@ class NotificationActionReceiver : BroadcastReceiver() {
             ACTION_DIRECT_REPLY -> {
                 val remoteInput = RemoteInput.getResultsFromIntent(intent)
                 val replyText = remoteInput?.getCharSequence(NotificationChatService.KEY_TEXT_REPLY)?.toString()
-                val notifId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
-                if (notifId != -1) {
-                    NotificationChatService.dismissResponseNotification(context, notifId)
-                }
                 if (!replyText.isNullOrBlank()) {
                     NotificationChatService.sendQueryToService(context, replyText)
+                } else {
+                    // Refresh notification so RemoteInput spinner finishes cleanly
+                    NotificationChatService.startService(context)
+                }
+            }
+            ACTION_RESTORE_NOTIFICATION -> {
+                // Prevent deletion if user swipes the ongoing notification on Android 14+
+                val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                val isEnabled = prefs.getBoolean("service_enabled", true)
+                if (isEnabled) {
+                    NotificationChatService.startService(context)
                 }
             }
             ACTION_COPY_RESPONSE -> {
@@ -34,9 +41,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 context.startService(serviceIntent)
             }
             ACTION_DISMISS_NOTIFICATION -> {
-                val notifId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
-                if (notifId != -1) {
-                    NotificationChatService.dismissResponseNotification(context, notifId)
+                // Single notification mode: keep main notification alive
+                val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+                if (prefs.getBoolean("service_enabled", true)) {
+                    NotificationChatService.startService(context)
                 }
             }
             ACTION_SHARE_RESPONSE -> {
@@ -73,6 +81,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_DIRECT_REPLY = "com.example.notifai.ACTION_DIRECT_REPLY"
+        const val ACTION_RESTORE_NOTIFICATION = "com.example.notifai.ACTION_RESTORE_NOTIFICATION"
         const val ACTION_COPY_RESPONSE = "com.example.notifai.ACTION_COPY_RESPONSE"
         const val ACTION_SHARE_RESPONSE = "com.example.notifai.ACTION_SHARE_RESPONSE"
         const val ACTION_NEW_CHAT = "com.example.notifai.ACTION_NEW_CHAT"

@@ -58,9 +58,9 @@ class AiApiClient {
         model: String,
         prompt: String,
         history: List<ChatTurn> = emptyList(),
-        systemInstruction: String = "You are NotifAI, a helpful and concise AI assistant. You answer in Hebrew or the language asked. When answering for notifications, keep key points clear and easy to read.",
+        systemInstruction: String = "You are NotifAI, a smart and helpful AI assistant. Always respond in fluent Hebrew (unless asked otherwise) with complete, detailed, and well-structured answers. Never cut off or truncate your response.",
         temperature: Float = 0.7f,
-        maxTokens: Int = 4096,
+        maxTokens: Int = 8192,
         attachment: AttachmentData? = null
     ): AiResponse = withContext(Dispatchers.IO) {
         when (provider) {
@@ -738,22 +738,36 @@ class AiApiClient {
         val rootJson = JSONObject()
         rootJson.put("model", model)
 
-        // Reasoning models compatibility (OpenAI o1, o3, etc.)
-        val isReasoningModel = (provider == ProviderType.OPENAI || provider == ProviderType.OPENROUTER) &&
+        // Reasoning models compatibility (OpenAI o1, o3, DeepSeek R1, QwQ, etc.)
+        val isOpenAiReasoningModel = provider == ProviderType.OPENAI &&
                 (model.startsWith("o1", ignoreCase = true) || model.startsWith("o3", ignoreCase = true))
 
-        if (isReasoningModel) {
-            rootJson.put("max_completion_tokens", maxTokens)
-            // Note: temperature is intentionally omitted for reasoning models as per API specs
+        val effectiveMaxTokens = if (provider == ProviderType.OPENROUTER) {
+            maxOf(maxTokens, 8192)
+        } else {
+            maxOf(maxTokens, 4096)
+        }
+
+        if (isOpenAiReasoningModel) {
+            rootJson.put("max_completion_tokens", effectiveMaxTokens)
+            // Note: temperature is intentionally omitted for OpenAI o1/o3 models as per API specs
         } else {
             rootJson.put("temperature", temperature.toDouble())
-            rootJson.put("max_tokens", maxTokens)
+            rootJson.put("max_tokens", effectiveMaxTokens)
+        }
+
+        if (provider == ProviderType.OPENROUTER) {
+            // Prevent reasoning tokens on OpenRouter from starving the visible response text
+            val reasoningObj = JSONObject().apply {
+                put("exclude", true)
+            }
+            rootJson.put("reasoning", reasoningObj)
         }
 
         val messagesArray = JSONArray()
         // System message (for o1/o3 modern endpoints use developer role if OpenAI)
         val sysMsg = JSONObject()
-        val sysRole = if (isReasoningModel && provider == ProviderType.OPENAI) "developer" else "system"
+        val sysRole = if (isOpenAiReasoningModel) "developer" else "system"
         sysMsg.put("role", sysRole)
         sysMsg.put("content", systemInstruction)
         messagesArray.put(sysMsg)
@@ -825,12 +839,43 @@ class AiApiClient {
             }
             val firstChoice = choices.getJSONObject(0)
             val msgObj = firstChoice.getJSONObject("message")
-            val content = msgObj.optString("content", "")
+
+            val rawContent = when (val contentField = msgObj.opt("content")) {
+                is JSONArray -> {
+                    val sb = StringBuilder()
+                    for (i in 0 until contentField.length()) {
+                        val elem = contentField.opt(i)
+                        if (elem is JSONObject) {
+                            val partText = elem.optString("text", "")
+                            if (partText.isNotEmpty()) sb.append(partText)
+                        } else if (elem is String) {
+                            sb.append(elem)
+                        }
+                    }
+                    sb.toString()
+                }
+                is String -> contentField
+                else -> msgObj.optString("content", "")
+            }
+
+            // Clean <think>...</think> blocks if present while preserving full answer
+            val cleanedContent = if (rawContent.contains("<think>") && rawContent.contains("</think>")) {
+                val stripped = rawContent.replace(Regex("<think>[\\s\\S]*?</think>"), "").trim()
+                stripped.ifBlank { rawContent.trim() }
+            } else {
+                rawContent.trim()
+            }
+
+            val finalContent = cleanedContent.ifBlank {
+                msgObj.optString("reasoning", "").ifBlank {
+                    msgObj.optString("reasoning_content", "")
+                }.trim()
+            }
 
             val usage = json.optJSONObject("usage")
             val totalTokens = usage?.optInt("total_tokens", 0) ?: 0
 
-            AiResponse(content.trim(), provider, model, totalTokens)
+            AiResponse(finalContent, provider, model, totalTokens)
         }
     }
 
