@@ -104,7 +104,13 @@ object AppStrings {
         ar: String = "",
         ru: String = "",
         es: String = "",
-        fr: String = ""
+        fr: String = "",
+        de: String = "",
+        pt: String = "",
+        zh: String = "",
+        ja: String = "",
+        tr: String = "",
+        it: String = ""
     ): String {
         val active = currentLang()
         if (active == Lang.HE) return he
@@ -115,6 +121,12 @@ object AppStrings {
             Lang.RU -> ru.ifBlank { translateEnglishToTarget(resolvedEn, Lang.RU) }
             Lang.ES -> es.ifBlank { translateEnglishToTarget(resolvedEn, Lang.ES) }
             Lang.FR -> fr.ifBlank { translateEnglishToTarget(resolvedEn, Lang.FR) }
+            Lang.DE -> de.ifBlank { translateEnglishToTarget(resolvedEn, Lang.DE) }
+            Lang.PT -> pt.ifBlank { translateEnglishToTarget(resolvedEn, Lang.PT) }
+            Lang.ZH -> zh.ifBlank { translateEnglishToTarget(resolvedEn, Lang.ZH) }
+            Lang.JA -> ja.ifBlank { translateEnglishToTarget(resolvedEn, Lang.JA) }
+            Lang.TR -> tr.ifBlank { translateEnglishToTarget(resolvedEn, Lang.TR) }
+            Lang.IT -> it.ifBlank { translateEnglishToTarget(resolvedEn, Lang.IT) }
             else -> translateEnglishToTarget(resolvedEn, active)
         }
     }

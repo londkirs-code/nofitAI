@@ -31,8 +31,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Info
@@ -49,12 +51,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -94,6 +99,7 @@ fun SecuritySettingsScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentLang = AppStrings.langOverrideState
+    var isLanguageMenuExpanded by remember { mutableStateOf(false) }
     val prefs = remember { context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE) }
     var autoStartOnBoot by remember { mutableStateOf(prefs.getBoolean("auto_start_boot", true)) }
 
@@ -181,7 +187,7 @@ fun SecuritySettingsScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // ==========================================
-        // 0. LANGUAGE & MULTI-LANGUAGE SUPPORT CARD (Task #15)
+        // 0. LANGUAGE & MULTI-LANGUAGE SUPPORT CARD (Task #15 - Dropdown Menu)
         // ==========================================
         Card(
             shape = RoundedCornerShape(20.dp),
@@ -220,8 +226,8 @@ fun SecuritySettingsScreen(
                         )
                         Text(
                             text = AppStrings.tr(
-                                "מתאים אוטומטית לשפת הטלפון או לבחירה ידנית (כולל כיוון טקסט ותרגום כל הממשק)",
-                                "Automatically adapts to phone language or manual choice (full UI translation & layout direction)"
+                                "מתאים אוטומטית לשפת הטלפון או לבחירה ידנית מרשימה נפתחת (כולל תרגום כל הממשק והודעות השגיאה)",
+                                "Automatically adapts to phone language or manual choice from dropdown (full UI & error translation)"
                             ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -229,30 +235,88 @@ fun SecuritySettingsScreen(
                     }
                 }
 
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    AppStrings.Lang.entries.forEach { langOption ->
-                        val isSelected = currentLang == langOption
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                AppStrings.setLanguageOverride(context, langOption)
-                            },
-                            label = {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedCard(
+                        onClick = { isLanguageMenuExpanded = true },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.outlinedCardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("language_dropdown_button")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Language,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
                                 Text(
-                                    text = if (langOption == AppStrings.Lang.AUTO) {
+                                    text = if (currentLang == AppStrings.Lang.AUTO) {
                                         AppStrings.tr("אוטומטי (שפת המכשיר)", "Auto (Device Language)")
                                     } else {
-                                        langOption.nativeLabel
+                                        currentLang.nativeLabel
                                     },
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 12.sp
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
-                        )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = AppStrings.tr("פתח רשימת שפות", "Open language list"),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = isLanguageMenuExpanded,
+                        onDismissRequest = { isLanguageMenuExpanded = false },
+                        modifier = Modifier.fillMaxWidth(0.85f)
+                    ) {
+                        AppStrings.Lang.entries.forEach { langOption ->
+                            val isSelected = currentLang == langOption
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (langOption == AppStrings.Lang.AUTO) {
+                                            AppStrings.tr("אוטומטי (שפת המכשיר)", "Auto (Device Language)")
+                                        } else {
+                                            langOption.nativeLabel
+                                        },
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    )
+                                },
+                                trailingIcon = if (isSelected) {
+                                    {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                } else null,
+                                onClick = {
+                                    AppStrings.setLanguageOverride(context, langOption)
+                                    isLanguageMenuExpanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }

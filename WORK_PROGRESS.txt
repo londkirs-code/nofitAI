@@ -55,10 +55,10 @@
     - בוצע במלואו ב-`NotificationChatService.kt`, `NotificationActionReceiver.kt`, `AttachContentDialogActivity.kt` ו-`MediaStorageManager.kt`:
       * כפתור "הורד קובץ" (`ACTION_DOWNLOAD_MEDIA`) מופיע ישירות בהתראה וגם בתוך חלון 'פעולות' ("הורד קובץ / תשובה אחרונה להורדות") ושומר את הקובץ (תמונה, שמע, וידאו או קובץ טקסט/קוד) ישירות לתיקיית `Downloads` במכשיר באמצעות `MediaStore` עם הודעת אישור.
 
-[V] 9. זיהוי חכם לסוג שגיאה ב-API עם תקציר בעברית והבחנה בין מודל ספציפי לכל המפתח + משך זמן חסימה
-    - בוצע במלואו ב-`ApiErrorAnalyzer.kt`:
+[V] 9. זיהוי חכם לסוג שגיאה ב-API עם תקציר בעברית ובכל 12 השפות והבחנה בין מודל ספציפי לכל המפתח + משך זמן חסימה
+    - בוצע במלואו ב-`ApiErrorAnalyzer.kt`, `ApiKeyEntity.kt`, ו-`AiRepository.kt`:
       * מזהה במדויק: שגיאת שרת, עומס בשרת, מודל לא קיים או לא זמין, חוסר התאמה לסוג החשבון/תוכנית, סיום מכסת טוקנים למפתח כולו מול סיום מכסה למודל הספציפי בלבד, וחסימה זמנית (Rate Limit).
-      * מחלץ את משך הזמן לחסימה (`retry-after` / טקסט השגיאה) ומציג בעברית ברורה לכמה זמן החסימה והאם היא רק למודל הספציפי או לכל ה-API במפתח.
+      * מחלץ את משך הזמן לחסימה (`retry-after` / טקסט השגיאה) ומציג בשפה הפעילה באפליקציה (עברית + כל 12 השפות הנתמכות) לכמה זמן החסימה והאם היא רק למודל הספציפי או לכל ה-API במפתח.
 
 [V] 10. דיבור לטקסט יעבוד מייד וישלח מייד, כל עוד המשתמש לא לוחץ כדי לערוך
     - בוצע במלואו ב-`VoiceInputActivity.kt`:
@@ -80,11 +80,11 @@
     - בוצע במלואו ב-`ChatViewModel.kt`, `AiRepository.kt` ו-`NotificationActionReceiver.kt`:
       * הוספת נעילת `sendMutex` ומנגנון מניעת כפילויות (`lastSubmittedPrompt` + `lastSubmitTimestampMs` + `isSending`) שמונע לחלוטין שליחה כפולה של אותה הודעה.
 
-[V] 15. תמיכה בכל השפות האפשריות עם תרגומים איכותיים והתאמה אוטומטית לשפת המכשיר על כל הטקסט והמלל באפליקציה כולה
-    - בוצע במלואו ב-`AppStrings.kt`, `MainActivity.kt`, `NotificationCenterScreen.kt`, `ApiKeysScreen.kt`, `SecuritySettingsScreen.kt`, `HistoryScreen.kt`, `ChatDialogActivity.kt`, `AddKeyDialog.kt`, `AttachContentDialogActivity.kt`, `NotificationChatService.kt`, `MessageAttachmentView.kt`, `ScreenCaptureActivity.kt`, ו-`NotificationActionReceiver.kt`:
-      * מנוע תרגום מקיף (`AppStrings.tr`) התומך ב-12 שפות (עברית, אנגלית, ערבית, רוסית, ספרדית, צרפתית, גרמנית, פורטוגזית, סינית, יפנית, טורקית, איטלקית) + התאמה אוטומטית לשפת המכשיר (`AUTO`) או בחירה ידנית מתוך מסך ההגדרות.
-      * התאמה אוטומטית של כיוון הממשק (RTL לעברית וערבית, LTR לשאר השפות) בכל המסכים והדיאלוגים.
-      * הנחיה אוטומטית ל-AI לענות בשפת המכשיר או בשפה שבה פנה המשתמש.
+[V] 15. תמיכה בכל השפות האפשריות עם תרגומים איכותיים, התאמה אוטומטית לשפת המכשיר ורשימה נפתחת (Dropdown) לבחירת שפה בהגדרות
+    - בוצע במלואו ב-`AppStrings.kt`, `SecuritySettingsScreen.kt`, `ApiErrorAnalyzer.kt`, `MainActivity.kt`, `HomeScreen.kt`, `ApiKeysScreen.kt`, `HistoryScreen.kt`, `ChatDialogActivity.kt`, `AttachContentDialogActivity.kt`, ו-`NotificationHelper.kt`:
+      * מנוע תרגום מקיף (`AppStrings.tr`) התומך ב-12 שפות (עברית, אנגלית, ערבית, רוסית, ספרדית, צרפתית, גרמנית, פורטוגזית, סינית, יפנית, טורקית, איטלקית) + התאמה אוטומטית לשפת המכשיר (`AUTO`).
+      * בחירת השפה במסך ההגדרות מוצגת כרשימה נפתחת (Dropdown Menu) נקייה ונוחה במקום כפתורים מרובים.
+      * התאמה אוטומטית של כיוון הממשק (RTL לעברית וערבית, LTR לשאר השפות) ותרגום מלא של כל הטקסטים, תקצירי שגיאות ה-API ומשכי החסימה.
 
 [V] 16. אפשרות לבחור סוג פלט (ברירת מחדל: טקסט, או תמונה, וידאו, סאונד, קובץ) מתוך 'פעולות' בהתראה
     - בוצע במלואו ב-`AttachContentDialogActivity.kt` ו-`AiRepository.kt`:

@@ -129,7 +129,22 @@ class AiRepository(
     ): QueryResult {
         val allEnabledKeys = apiKeyDao.getEnabledKeys()
         if (allEnabledKeys.isEmpty()) {
-            throw IllegalStateException("לא הוגדרו או לא הופעלו מפתחות API באפליקציה. אנא הפעל או הוסף מפתח.")
+            throw IllegalStateException(
+                com.example.util.AppStrings.tr(
+                    he = "לא הוגדרו או לא הופעלו מפתחות API באפליקציה. אנא הפעל או הוסף מפתח.",
+                    en = "No API keys are configured or enabled. Please add or enable an API key.",
+                    ar = "لم يتم إعداد أو تفعيل أي مفاتيح API. يرجى إضافة أو تفعيل مفتاح.",
+                    ru = "Ключи API не настроены или не включены. Пожалуйста, добавьте или включите ключ.",
+                    es = "No se han configurado ni activado claves API. Añade o activa una clave.",
+                    fr = "Aucune clé API n'est configurée ou activée. Veuillez ajouter ou activer une clé.",
+                    de = "Keine API-Schlüssel konfiguriert oder aktiviert. Bitte fügen Sie einen Schlüssel hinzu.",
+                    pt = "Nenhuma chave API configurada ou ativada. Adicione ou ative uma chave.",
+                    zh = "尚未配置或启用任何API密钥。请添加或启用一个密钥。",
+                    ja = "APIキーが設定または有効化されていません。キーを追加または有効にしてください。",
+                    tr = "Yapılandırılmış veya etkinleştirilmiş API anahtarı yok. Lütfen bir anahtar ekleyin veya etkinleştirin.",
+                    it = "Nessuna chiave API configurata o attivata. Aggiungi o attiva una chiave."
+                )
+            )
         }
 
         val conv = if (conversationId != null) {
@@ -205,7 +220,34 @@ class AiRepository(
             if (keyEntity.isSuspended) {
                 fallbackOccurred = true
                 val remainingStr = ApiKeyEntity.formatDurationHe(keyEntity.remainingSuspensionSeconds)
-                val skipMsg = "המפתח '${keyEntity.name}' חסום זמנית לעוד $remainingStr (${keyEntity.suspensionReason ?: "מכסה"})"
+                val reasonLabel = keyEntity.suspensionReason ?: com.example.util.AppStrings.tr(
+                    he = "מכסה",
+                    en = "Quota",
+                    ar = "الحصة",
+                    ru = "Квота",
+                    es = "Cuota",
+                    fr = "Quota",
+                    de = "Kontingent",
+                    pt = "Cota",
+                    zh = "配额",
+                    ja = "クォータ",
+                    tr = "Kota",
+                    it = "Quota"
+                )
+                val skipMsg = com.example.util.AppStrings.tr(
+                    he = "המפתח '${keyEntity.name}' חסום זמנית לעוד $remainingStr ($reasonLabel)",
+                    en = "Key '${keyEntity.name}' is temporarily blocked for $remainingStr ($reasonLabel)",
+                    ar = "المفتاح '${keyEntity.name}' محظور مؤقتاً لمدة $remainingStr ($reasonLabel)",
+                    ru = "Ключ '${keyEntity.name}' временно заблокирован ещё на $remainingStr ($reasonLabel)",
+                    es = "La clave '${keyEntity.name}' está bloqueada temporalmente por $remainingStr ($reasonLabel)",
+                    fr = "La clé '${keyEntity.name}' est temporairement bloquée pendant $remainingStr ($reasonLabel)",
+                    de = "Schlüssel '${keyEntity.name}' ist vorübergehend für $remainingStr gesperrt ($reasonLabel)",
+                    pt = "A chave '${keyEntity.name}' está bloqueada temporariamente por $remainingStr ($reasonLabel)",
+                    zh = "密钥 '${keyEntity.name}' 暂时封锁还剩 $remainingStr ($reasonLabel)",
+                    ja = "キー '${keyEntity.name}' はあと $remainingStr 一時ブロックされています ($reasonLabel)",
+                    tr = "'${keyEntity.name}' anahtarı $remainingStr süreyle geçici olarak engellendi ($reasonLabel)",
+                    it = "La chiave '${keyEntity.name}' è bloccata temporaneamente per $remainingStr ($reasonLabel)"
+                )
                 fallbackReason = skipMsg
                 errorsEncountered.add(skipMsg)
                 continue
@@ -225,7 +267,20 @@ class AiRepository(
                 if (modelRemSec > 0L) {
                     fallbackOccurred = true
                     val remStr = ApiKeyEntity.formatDurationHe(modelRemSec)
-                    val modelSkipMsg = "המודל '$candidateModel' במפתח '${keyEntity.name}' חסום לעוד $remStr"
+                    val modelSkipMsg = com.example.util.AppStrings.tr(
+                        he = "המודל '$candidateModel' במפתח '${keyEntity.name}' חסום לעוד $remStr",
+                        en = "Model '$candidateModel' in key '${keyEntity.name}' is blocked for $remStr",
+                        ar = "النموذج '$candidateModel' في المفتاح '${keyEntity.name}' محظور لمدة $remStr",
+                        ru = "Модель '$candidateModel' в ключе '${keyEntity.name}' заблокирована ещё на $remStr",
+                        es = "El modelo '$candidateModel' en la clave '${keyEntity.name}' está bloqueado por $remStr",
+                        fr = "Le modèle '$candidateModel' de la clé '${keyEntity.name}' est bloqué pendant $remStr",
+                        de = "Modell '$candidateModel' in Schlüssel '${keyEntity.name}' ist für $remStr gesperrt",
+                        pt = "O modelo '$candidateModel' na chave '${keyEntity.name}' está bloqueado por $remStr",
+                        zh = "密钥 '${keyEntity.name}' 中的模型 '$candidateModel' 封锁还剩 $remStr",
+                        ja = "キー '${keyEntity.name}' のモデル '$candidateModel' はあと $remStr ブロックされています",
+                        tr = "'${keyEntity.name}' anahtarındaki '$candidateModel' modeli $remStr süreyle engellendi",
+                        it = "Il modello '$candidateModel' nella chiave '${keyEntity.name}' è bloccato per $remStr"
+                    )
                     fallbackReason = modelSkipMsg
                     errorsEncountered.add(modelSkipMsg)
                     continue
@@ -387,7 +442,20 @@ class AiRepository(
                     val analyzed = e.analyzed
                     val until = System.currentTimeMillis() + (analyzed.blockDurationSeconds * 1000L)
                     fallbackOccurred = true
-                    fallbackReason = "דילוג אוטומטי מ-'$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}"
+                    fallbackReason = com.example.util.AppStrings.tr(
+                        he = "דילוג אוטומטי מ-'$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        en = "Auto-failover from '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        ar = "التبديل التلقائي من '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        ru = "Автопереход с '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        es = "Cambio automático desde '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        fr = "Basculement automatique depuis '$candidateModel' (${keyEntity.name}) : ${analyzed.category.badgeHe}",
+                        de = "Automatischer Wechsel von '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        pt = "Alternância automática de '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}",
+                        zh = "已从 '$candidateModel' (${keyEntity.name}) 自动切换：${analyzed.category.badgeHe}",
+                        ja = "'$candidateModel' (${keyEntity.name}) から自動切替: ${analyzed.category.badgeHe}",
+                        tr = "'$candidateModel' (${keyEntity.name}) modelinden otomatik geçiş: ${analyzed.category.badgeHe}",
+                        it = "Passaggio automatico da '$candidateModel' (${keyEntity.name}): ${analyzed.category.badgeHe}"
+                    )
                     errorsEncountered.add("${keyEntity.name} ($candidateModel): ${analyzed.hebrewSummary}")
 
                     if (analyzed.scope == BlockScope.ENTIRE_KEY) {
@@ -401,33 +469,100 @@ class AiRepository(
                     }
                 } catch (e: AiCallException.QuotaExceeded) {
                     val until = System.currentTimeMillis() + (e.suspensionSeconds * 1000)
-                    val reason = "נגמרה המכסה במפתח [כל ה-API]: ${e.message}"
+                    val reason = com.example.util.AppStrings.tr(
+                        he = "נגמרה המכסה במפתח [כל ה-API]: ${e.message}",
+                        en = "Key quota exhausted [Entire API]: ${e.message}",
+                        ar = "انتهت حصة المفتاح [API بالكامل]: ${e.message}",
+                        ru = "Квота ключа исчерпана [Весь API]: ${e.message}",
+                        es = "Cuota de clave agotada [Toda la API]: ${e.message}",
+                        fr = "Quota de clé épuisé [Toute l'API] : ${e.message}",
+                        de = "Schlüsselkontingent erschöpft [Gesamte API]: ${e.message}",
+                        pt = "Cota da chave esgotada [Toda a API]: ${e.message}",
+                        zh = "密钥配额已用尽 [整个API]：${e.message}",
+                        ja = "キーのクォータ上限到達 [API全体]: ${e.message}",
+                        tr = "Anahtar kotası doldu [Tüm API]: ${e.message}",
+                        it = "Quota chiave esaurita [Intera API]: ${e.message}"
+                    )
                     apiKeyDao.markSuspended(keyEntity.id, until, reason)
                     fallbackOccurred = true
-                    fallbackReason = "המפתח '${keyEntity.name}' ניצל את המכסה, עובר אוטומטית למודל/מפתח הבא"
+                    fallbackReason = com.example.util.AppStrings.tr(
+                        he = "המפתח '${keyEntity.name}' ניצל את המכסה, עובר אוטומטית למודל/מפתח הבא",
+                        en = "Key '${keyEntity.name}' quota reached, switching to next model/key",
+                        ar = "استنفد المفتاح '${keyEntity.name}' الحصة، جاري الانتقال للمفتاح التالي",
+                        ru = "Ключ '${keyEntity.name}' исчерпал лимит, переход к следующему ключу",
+                        es = "La clave '${keyEntity.name}' agotó su cuota, cambiando a la siguiente",
+                        fr = "Quota atteint pour '${keyEntity.name}', passage à la clé suivante",
+                        de = "Kontingent für '${keyEntity.name}' erreicht, Wechsel zum nächsten Schlüssel",
+                        pt = "Cota da chave '${keyEntity.name}' atingida, alternando para a próxima",
+                        zh = "密钥 '${keyEntity.name}' 配额已满，自动切换至下一个模型/密钥",
+                        ja = "キー '${keyEntity.name}' の上限に達したため次のモデル/キーへ切り替えます",
+                        tr = "'${keyEntity.name}' anahtar kotası doldu, sonraki anahtara geçiliyor",
+                        it = "Quota esaurita per '${keyEntity.name}', passaggio alla chiave successiva"
+                    )
                     errorsEncountered.add("${keyEntity.name}: $reason")
                     break
                 } catch (e: AiCallException.RateLimit) {
                     val until = System.currentTimeMillis() + (e.retryAfterSeconds * 1000)
                     val updatedCsv = currentKeySnapshot.withModelSuspended(candidateModel, until)
                     currentKeySnapshot = currentKeySnapshot.copy(modelSuspensionsCsv = updatedCsv)
-                    val reason = "הגבלת קצב [מודל '$candidateModel']: חסום ל-${ApiKeyEntity.formatDurationHe(e.retryAfterSeconds)}"
+                    val durStr = ApiKeyEntity.formatDurationHe(e.retryAfterSeconds)
+                    val reason = com.example.util.AppStrings.tr(
+                        he = "הגבלת קצב [מודל '$candidateModel']: חסום ל-$durStr",
+                        en = "Rate limit [Model '$candidateModel']: blocked for $durStr",
+                        ar = "حد المعدل [النموذج '$candidateModel']: محظور لمدة $durStr",
+                        ru = "Лимит запросов [Модель '$candidateModel']: блок на $durStr",
+                        es = "Límite de tasa [Modelo '$candidateModel']: bloqueado por $durStr",
+                        fr = "Limite de débit [Modèle '$candidateModel'] : bloqué pendant $durStr",
+                        de = "Ratenlimit [Modell '$candidateModel']: gesperrt für $durStr",
+                        pt = "Limite de taxa [Modelo '$candidateModel']: bloqueado por $durStr",
+                        zh = "速率限制 [模型 '$candidateModel']：封锁 $durStr",
+                        ja = "レート制限 [モデル '$candidateModel']: $durStr ブロック",
+                        tr = "Hız sınırı [Model '$candidateModel']: $durStr engellendi",
+                        it = "Limite di frequenza [Modello '$candidateModel']: bloccato per $durStr"
+                    )
                     apiKeyDao.markModelSuspended(keyEntity.id, updatedCsv, reason)
                     fallbackOccurred = true
-                    fallbackReason = "המודל '$candidateModel' חרג מקצב בקשות, עובר למודל הבא"
+                    fallbackReason = reason
                     errorsEncountered.add("${keyEntity.name}: $reason")
                 } catch (e: AiCallException.ServerUnavailable) {
                     val until = System.currentTimeMillis() + (e.retryAfterSeconds * 1000)
-                    val reason = "שרת לא זמין (${e.message}) — מושהה ל-${ApiKeyEntity.formatDurationHe(e.retryAfterSeconds)}"
+                    val durStr = ApiKeyEntity.formatDurationHe(e.retryAfterSeconds)
+                    val reason = com.example.util.AppStrings.tr(
+                        he = "שרת לא זמין (${e.message}) — מושהה ל-$durStr",
+                        en = "Server unavailable (${e.message}) — paused for $durStr",
+                        ar = "الخادم غير متاح (${e.message}) — متوقف لمدة $durStr",
+                        ru = "Сервер недоступен (${e.message}) — пауза на $durStr",
+                        es = "Servidor no disponible (${e.message}) — pausado por $durStr",
+                        fr = "Serveur indisponible (${e.message}) — pause de $durStr",
+                        de = "Server nicht erreichbar (${e.message}) — pausiert für $durStr",
+                        pt = "Servidor indisponível (${e.message}) — pausado por $durStr",
+                        zh = "服务器不可用 (${e.message}) — 暂停 $durStr",
+                        ja = "サーバー利用不可 (${e.message}) — $durStr 一時停止",
+                        tr = "Sunucu kullanılamıyor (${e.message}) — $durStr duraklatıldı",
+                        it = "Server non disponibile (${e.message}) — in pausa per $durStr"
+                    )
                     apiKeyDao.markSuspended(keyEntity.id, until, reason)
                     fallbackOccurred = true
-                    fallbackReason = "שרת '${keyEntity.name}' אינו זמין כרגע, עובר למודל הבא"
+                    fallbackReason = reason
                     errorsEncountered.add("${keyEntity.name}: $reason")
                     break
                 } catch (e: Exception) {
                     errorsEncountered.add("${keyEntity.name} ($candidateModel): ${e.message}")
                     fallbackOccurred = true
-                    fallbackReason = "שגיאה ב-$candidateModel (${keyEntity.name}), מנסה את המודל הבא"
+                    fallbackReason = com.example.util.AppStrings.tr(
+                        he = "שגיאה ב-$candidateModel (${keyEntity.name}), מנסה את המודל הבא",
+                        en = "Error in $candidateModel (${keyEntity.name}), trying next model",
+                        ar = "خطأ في $candidateModel (${keyEntity.name})، جاري تجربة النموذج التالي",
+                        ru = "Ошибка в $candidateModel (${keyEntity.name}), пробуем следующую модель",
+                        es = "Error en $candidateModel (${keyEntity.name}), probando el siguiente modelo",
+                        fr = "Erreur sur $candidateModel (${keyEntity.name}), essai du modèle suivant",
+                        de = "Fehler bei $candidateModel (${keyEntity.name}), versuche nächstes Modell",
+                        pt = "Erro em $candidateModel (${keyEntity.name}), tentando próximo modelo",
+                        zh = "$candidateModel (${keyEntity.name}) 出错，正在尝试下一个模型",
+                        ja = "$candidateModel (${keyEntity.name}) でエラー、次のモデルを試行中",
+                        tr = "$candidateModel (${keyEntity.name}) hatası, sonraki model deneniyor",
+                        it = "Errore in $candidateModel (${keyEntity.name}), provo il modello successivo"
+                    )
                 }
             }
         }
@@ -435,9 +570,36 @@ class AiRepository(
         val errSummary = if (errorsEncountered.isNotEmpty()) {
             errorsEncountered.joinToString("\n• ")
         } else {
-            "כל המפתחות והמודלים מושהים זמנית עקב מגבלת מכסה. אנא המתן להתחדשות או הפעל מפתח נוסף."
+            com.example.util.AppStrings.tr(
+                he = "כל המפתחות והמודלים מושהים זמנית עקב מגבלת מכסה. אנא המתן להתחדשות או הפעל מפתח נוסף.",
+                en = "All keys and models are temporarily paused due to quota limits. Please wait for reset or enable another key.",
+                ar = "جميع المفاتيح والنماذج متوقفة مؤقتاً بسبب حدود الحصة. يرجى الانتظار أو تفعيل مفتاح آخر.",
+                ru = "Все ключи и модели временно приостановлены из-за лимитов квот. Подождите или включите другой ключ.",
+                es = "Todas las claves y modelos están en pausa temporalmente por límites de cuota. Espera o activa otra clave.",
+                fr = "Toutes les clés et tous les modèles sont temporairement suspendus en raison des limites de quota.",
+                de = "Alle Schlüssel und Modelle sind wegen Kontingentgrenzen vorübergehend pausiert.",
+                pt = "Todas as chaves e modelos estão temporariamente pausados devido a limites de cota.",
+                zh = "所有密钥和模型因配额限制暂时停用。请等待重置或启用其他密钥。",
+                ja = "すべてのキーとモデルがクォータ制限により一時停止中です。リセットを待つか別のキーを有効にしてください。",
+                tr = "Tüm anahtarlar ve modeller kota sınırları nedeniyle geçici olarak duraklatıldı.",
+                it = "Tutte le chiavi e i modelli sono temporaneamente in pausa per limiti di quota."
+            )
         }
-        val errText = "⚠️ לא התקבל מענה (בוצע ניסיון מעבר אוטומטי בין כל המודלים הפעילים):\n• $errSummary"
+        val errHeader = com.example.util.AppStrings.tr(
+            he = "⚠️ לא התקבל מענה (בוצע ניסיון מעבר אוטומטי בין כל המודלים הפעילים):",
+            en = "⚠️ No response received (automatic failover attempted across all active models):",
+            ar = "⚠️ لم يتم تلقي رد (تمت محاولة التبديل التلقائي بين جميع النماذج النشطة):",
+            ru = "⚠️ Ответ не получен (выполнена попытка автопереключения между всеми активными моделями):",
+            es = "⚠️ No se recibió respuesta (se intentó cambio automático entre todos los modelos activos):",
+            fr = "⚠️ Aucune réponse reçue (basculement automatique tenté sur tous les modèles actifs) :",
+            de = "⚠️ Keine Antwort erhalten (automatischer Wechsel über alle aktiven Modelle versucht):",
+            pt = "⚠️ Nenhuma resposta recebida (alternância automática tentada em todos os modelos ativos):",
+            zh = "⚠️ 未收到回复（已尝试在所有启用模型间自动切换）：",
+            ja = "⚠️ 応答がありません（有効な全モデル間で自動切替を試行しました）:",
+            tr = "⚠️ Yanıt alınamadı (tüm aktif modeller arasında otomatik geçiş denendi):",
+            it = "⚠️ Nessuna risposta ricevuta (tentato passaggio automatico tra tutti i modelli attivi):"
+        )
+        val errText = "$errHeader\n• $errSummary"
 
         val errorMsg = ChatMessageEntity(
             conversationId = conv.id,
