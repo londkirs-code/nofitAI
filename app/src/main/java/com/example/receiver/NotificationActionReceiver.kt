@@ -3,13 +3,17 @@ package com.example.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.widget.Toast
 import androidx.core.app.RemoteInput
 import com.example.service.NotificationChatService
+import com.example.util.AppStrings
+import com.example.util.MediaStorageManager
 
 class NotificationActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent == null) return
+        AppStrings.initFromPrefs(context)
 
         when (intent.action) {
             ACTION_DIRECT_REPLY -> {
@@ -18,12 +22,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 if (!replyText.isNullOrBlank()) {
                     NotificationChatService.sendQueryToService(context, replyText)
                 } else {
-                    // Refresh notification so RemoteInput spinner finishes cleanly
                     NotificationChatService.startService(context)
                 }
             }
             ACTION_RESTORE_NOTIFICATION -> {
-                // Prevent deletion if user swipes the ongoing notification on Android 14+
                 val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
                 val isEnabled = prefs.getBoolean("service_enabled", true)
                 if (isEnabled) {
@@ -40,8 +42,39 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
                 context.startService(serviceIntent)
             }
+            ACTION_CLEAR_DISPLAY_ONLY -> {
+                NotificationChatService.clearNotificationDisplayOnly(context)
+            }
+            ACTION_STOP_AUDIO_PLAYBACK -> {
+                NotificationChatService.stopAudioPlayback(context)
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("ניגון השמע והתראת השמע נסגרו ⏹️", "Audio playback & notification closed ⏹️"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            ACTION_DOWNLOAD_MEDIA -> {
+                val uriStr = intent.getStringExtra(NotificationChatService.EXTRA_ATTACHMENT_URI)
+                    ?: NotificationChatService.latestAttachmentUri
+                val mime = intent.getStringExtra(NotificationChatService.EXTRA_ATTACHMENT_MIME)
+                    ?: NotificationChatService.latestAttachmentMimeType
+                val name = intent.getStringExtra(NotificationChatService.EXTRA_ATTACHMENT_NAME)
+                    ?: NotificationChatService.latestAttachmentName
+                if (!uriStr.isNullOrBlank()) {
+                    val saved = MediaStorageManager.saveFileToPublicDownloads(context, uriStr, mime, name)
+                    if (saved != null) {
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr(
+                                "הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): $saved 📥",
+                                "File downloaded to Downloads/NotifAI: $saved 📥"
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
             ACTION_DISMISS_NOTIFICATION -> {
-                // Single notification mode: keep main notification alive
                 val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
                 if (prefs.getBoolean("service_enabled", true)) {
                     NotificationChatService.startService(context)
@@ -57,12 +90,19 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         putExtra(Intent.EXTRA_TEXT, textToShare)
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
-                    val chooser = Intent.createChooser(shareIntent, "שתף תשובה מ-NotifAI").apply {
+                    val chooser = Intent.createChooser(
+                        shareIntent,
+                        AppStrings.tr("שתף תשובה מ-NotifAI", "Share response from NotifAI")
+                    ).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
                     context.startActivity(chooser)
                 } else {
-                    android.widget.Toast.makeText(context, "אין עדיין תשובה זמינה לשיתוף", android.widget.Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        AppStrings.tr("אין עדיין תשובה זמינה לשיתוף", "No response available to share yet"),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
             ACTION_SCREENSHOT -> {
@@ -86,6 +126,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_SHARE_RESPONSE = "com.example.notifai.ACTION_SHARE_RESPONSE"
         const val ACTION_NEW_CHAT = "com.example.notifai.ACTION_NEW_CHAT"
         const val ACTION_CLEAR_ALL_NOTIFICATIONS = "com.example.notifai.ACTION_CLEAR_ALL_NOTIFICATIONS"
+        const val ACTION_CLEAR_DISPLAY_ONLY = "com.example.notifai.ACTION_CLEAR_DISPLAY_ONLY"
+        const val ACTION_STOP_AUDIO_PLAYBACK = "com.example.notifai.ACTION_STOP_AUDIO_PLAYBACK"
+        const val ACTION_DOWNLOAD_MEDIA = "com.example.notifai.ACTION_DOWNLOAD_MEDIA"
         const val ACTION_DISMISS_NOTIFICATION = "com.example.notifai.ACTION_DISMISS_NOTIFICATION"
         const val ACTION_SCREENSHOT = "com.example.notifai.ACTION_SCREENSHOT"
         const val EXTRA_NOTIFICATION_ID = "extra_notification_id"

@@ -1,17 +1,13 @@
 package com.example.ui.screens
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import com.example.service.NotificationChatService
-import com.example.ui.AttachContentDialogActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,20 +25,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -65,9 +54,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,12 +64,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
+import com.example.service.NotificationChatService
+import com.example.ui.AttachContentDialogActivity
 import com.example.ui.viewmodel.NotifAiViewModel
+import com.example.util.AppStrings
 
 @Composable
 fun NotificationCenterScreen(
     viewModel: NotifAiViewModel,
+    onRequestActivateNotification: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -98,6 +91,19 @@ fun NotificationCenterScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         viewModel.setAttachmentUri(uri)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.syncServiceActiveState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val enabledKeysCount = apiKeys.count { it.isEnabled }
@@ -129,20 +135,20 @@ fun NotificationCenterScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        IconButton(
+                            onClick = { onRequestActivateNotification() },
                             modifier = Modifier
                                 .size(44.dp)
                                 .background(
                                     if (isServiceActive) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surfaceContainer,
                                     CircleShape
-                                ),
-                            contentAlignment = Alignment.Center
+                                )
                         ) {
                             Icon(
                                 imageVector = if (isServiceActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
-                                contentDescription = null,
+                                contentDescription = AppStrings.tr("הפעל התראה"),
                                 tint = if (isServiceActive) MaterialTheme.colorScheme.primary else Color.Gray,
                                 modifier = Modifier.size(24.dp)
                             )
@@ -150,12 +156,16 @@ fun NotificationCenterScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = if (isServiceActive) "התראת NotifAI פעילה" else "התראה מושהית",
+                                text = if (isServiceActive) AppStrings.tr("התראת NotifAI פעילה") else AppStrings.tr("התראה מושהית"),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (isServiceActive) "מוכן לקבלת שאלות ישירות ממרכז ההתראות" else "הפעל כדי להציג את שורת הצ'אט בהתראות",
+                                text = if (isServiceActive) {
+                                    AppStrings.tr("מוכן לקבלת שאלות ישירות ממרכז ההתראות")
+                                } else {
+                                    AppStrings.tr("הפעל כדי להציג את שורת הצ'אט בהתראות")
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -164,7 +174,13 @@ fun NotificationCenterScreen(
 
                     Switch(
                         checked = isServiceActive,
-                        onCheckedChange = { viewModel.toggleService(it) },
+                        onCheckedChange = { wantActive ->
+                            if (wantActive) {
+                                onRequestActivateNotification()
+                            } else {
+                                viewModel.toggleService(false)
+                            }
+                        },
                         modifier = Modifier.testTag("service_toggle_switch"),
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = MaterialTheme.colorScheme.primary,
@@ -179,8 +195,7 @@ fun NotificationCenterScreen(
                 if (!isServiceActive) {
                     Button(
                         onClick = {
-                            viewModel.toggleService(true)
-                            Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
+                            onRequestActivateNotification()
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
@@ -197,7 +212,7 @@ fun NotificationCenterScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "🚀 הפעל התראה עכשיו",
+                            text = AppStrings.tr("🚀 הפעל התראה עכשיו"),
                             fontWeight = FontWeight.Bold,
                             fontSize = 15.sp
                         )
@@ -210,8 +225,7 @@ fun NotificationCenterScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                NotificationChatService.startService(context)
-                                Toast.makeText(context, "ההתראה רועננה ונשלחה מחדש 🔔", Toast.LENGTH_SHORT).show()
+                                onRequestActivateNotification()
                             },
                             modifier = Modifier
                                 .weight(1f)
@@ -220,13 +234,13 @@ fun NotificationCenterScreen(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("רענן התראה", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(AppStrings.tr("רענן התראה"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         OutlinedButton(
                             onClick = {
                                 viewModel.toggleService(false)
-                                Toast.makeText(context, "ההתראה נסגרה", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, AppStrings.tr("ההתראה נסגרה", "Notification closed"), Toast.LENGTH_SHORT).show()
                             },
                             colors = ButtonDefaults.outlinedButtonColors(
                                 contentColor = MaterialTheme.colorScheme.error
@@ -238,7 +252,7 @@ fun NotificationCenterScreen(
                         ) {
                             Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("סגור התראה", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(AppStrings.tr("סגור התראה"), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
@@ -250,126 +264,17 @@ fun NotificationCenterScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     StatusChip(
-                        title = "מפתחות מוכנים",
+                        title = AppStrings.tr("מפתחות מוכנים"),
                         value = "$readyKeysCount / $enabledKeysCount",
                         isSuccess = readyKeysCount > 0,
                         modifier = Modifier.weight(1f)
                     )
                     StatusChip(
-                        title = "מצב התראה",
-                        value = if (isServiceActive) "קבועה (פעילה)" else "כבויה / נסגרה",
+                        title = AppStrings.tr("מצב התראה"),
+                        value = if (isServiceActive) AppStrings.tr("קבועה (פעילה)") else AppStrings.tr("כבויה / נסגרה"),
                         isSuccess = isServiceActive,
                         modifier = Modifier.weight(1f)
                     )
-                }
-            }
-        }
-
-        // Instant Screenshot 1-Click Status Card with automatic detection
-        val lifecycleOwner = LocalLifecycleOwner.current
-        var isFastCaptureActive by remember {
-            mutableStateOf(com.example.service.FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(context))
-        }
-
-        DisposableEffect(lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) {
-                    viewModel.syncServiceActiveState()
-                    isFastCaptureActive = com.example.service.FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(context)
-                }
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-            }
-        }
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isFastCaptureActive) {
-                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                }
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.CameraAlt,
-                            contentDescription = null,
-                            tint = if (isFastCaptureActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = "צילום מסך מיידי (ללא אישור בכל פעם)",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (isFastCaptureActive) "מופעל ⚡ לחיצה על צילום מסך מצלמת מיד ללא שאלות" else "מומלץ להפעיל כדי לא לקבל שאלת אישור בכל צילום",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                if (!isFastCaptureActive) {
-                    Text(
-                        text = "כדי לצלם מסך ישירות מתוך ההתראה בלחיצה אחת בלי שגוגל ישאל בכל פעם: הפעל פעם אחת את 'NotifAI' בהגדרות הנגישות.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 18.sp
-                    )
-                    Button(
-                        onClick = {
-                            com.example.service.FastScreenCaptureAccessibilityService.openAccessibilitySettings(context)
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .testTag("enable_fast_capture_btn")
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("⚡ הפעל צילום מיידי (בהגדרות נגישות)", fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                            .padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "השירות מחובר! כל לחיצה על 'צילום מסך' בהתראה תצלם ותנתח מיידית.",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
                 }
             }
         }
@@ -392,17 +297,23 @@ fun NotificationCenterScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "איך זה עובד?",
+                        text = AppStrings.tr("איך זה עובד?"),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "1. בכל כניסה לאפליקציה, התראת NotifAI מופעלת אוטומטית בעדיפות עליונה וללא צליל/רטט.\n" +
+                    text = AppStrings.tr(
+                        he = "1. בכל כניסה לאפליקציה, התראת NotifAI מופעלת אוטומטית בעדיפות עליונה וללא צליל/רטט.\n" +
                             "2. הקש על 'שאל AI' או כתוב ישירות בשורת ההזנה בהתראה.\n" +
-                            "3. התשובה תוצג ישירות באותה התראה (תמיד התראה אחת בלבד!).\n" +
-                            "4. לחץ על '⚙️ פעולות' בהתראה להעתקה, שיתוף, החלפה/עריכת מודלים או סגירת ההתראה.",
+                            "3. התשובה (טקסט, תמונה, שמע, וידאו או קובץ להורדה) תוצג ישירות באותה התראה!\n" +
+                            "4. לחץ על '⚙️ פעולות' בהתראה לבחירת סוג פלט, הדלקה/כיבוי מפתחות, ניקוי תצוגה, שיחה חדשה או הורדת קבצים.",
+                        en = "1. Every time you open the app, the NotifAI notification activates automatically at max priority without sound/vibration.\n" +
+                            "2. Tap 'Ask AI' or type directly in the notification's inline reply bar.\n" +
+                            "3. The response (text, image, audio, video, or downloadable file) appears right inside the same notification!\n" +
+                            "4. Tap '⚙️ Actions' in the notification to pick output type, toggle API keys, clear display, start a new chat, or download files."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -423,12 +334,12 @@ fun NotificationCenterScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "בדיקת שאילתה וצירוף קובץ",
+                    text = AppStrings.tr("בדיקת שאילתה וצירוף קובץ"),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "באפשרותך לצרף תמונה או מסמך ולשלוח שאלה. התשובה תופיע מיידית בהתראה במכשירך:",
+                    text = AppStrings.tr("באפשרותך לצרף תמונה או מסמך ולשלוח שאלה. התשובה תופיע מיידית בהתראה במכשירך:"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -450,7 +361,7 @@ fun NotificationCenterScreen(
                             if (attachmentUri != null) {
                                 AsyncImage(
                                     model = attachmentUri,
-                                    contentDescription = "קובץ מצורף",
+                                    contentDescription = AppStrings.tr("קובץ מצורף", "Attachment"),
                                     modifier = Modifier
                                         .size(48.dp)
                                         .clip(RoundedCornerShape(8.dp)),
@@ -460,12 +371,12 @@ fun NotificationCenterScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "קובץ מצורף מוכן לשליחה",
+                                    text = AppStrings.tr("קובץ מצורף מוכן לשליחה"),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "יועבר למודל ה-AI יחד עם שאלתך",
+                                    text = AppStrings.tr("יועבר למודל ה-AI יחד עם שאלתך"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -476,7 +387,7 @@ fun NotificationCenterScreen(
                             onClick = { viewModel.setAttachmentUri(null) },
                             modifier = Modifier.testTag("remove_attachment_btn")
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "הסר קובץ")
+                            Icon(Icons.Default.Close, contentDescription = AppStrings.tr("הסר קובץ", "Remove file"))
                         }
                     }
                 }
@@ -484,8 +395,8 @@ fun NotificationCenterScreen(
                 OutlinedTextField(
                     value = testQueryInput,
                     onValueChange = { testQueryInput = it },
-                    label = { Text("שאל משהו את NotifAI...") },
-                    placeholder = { Text("למשל: תסכם לי בקצרה מה זה מחשוב קוונטי") },
+                    label = { Text(AppStrings.tr("שאל משהו את NotifAI...")) },
+                    placeholder = { Text(AppStrings.tr("למשל: תסכם לי בקצרה מה זה מחשוב קוונטי")) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("test_query_input"),
@@ -500,7 +411,7 @@ fun NotificationCenterScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Image,
-                                contentDescription = "צרף תמונה",
+                                contentDescription = AppStrings.tr("צרף תמונה", "Attach image"),
                                 tint = if (attachmentUri != null) MaterialTheme.colorScheme.primary else Color.Gray
                             )
                         }
@@ -528,7 +439,7 @@ fun NotificationCenterScreen(
                     ) {
                         Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("שלח להתראה", fontWeight = FontWeight.Bold)
+                        Text(AppStrings.tr("שלח להתראה"), fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -537,8 +448,8 @@ fun NotificationCenterScreen(
                             if (fastService != null) {
                                 fastService.captureNow()
                             } else {
-                                val captureIntent = android.content.Intent(context, com.example.ui.ScreenCaptureActivity::class.java).apply {
-                                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                val captureIntent = Intent(context, com.example.ui.ScreenCaptureActivity::class.java).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                                 }
                                 context.startActivity(captureIntent)
                             }
@@ -549,7 +460,7 @@ fun NotificationCenterScreen(
                     ) {
                         Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("📸 צילום מסך", fontWeight = FontWeight.Bold)
+                        Text(AppStrings.tr("📸 צילום מסך"), fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -562,7 +473,7 @@ fun NotificationCenterScreen(
                     ) {
                         Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("צרף מדיה")
+                        Text(AppStrings.tr("צרף מדיה"))
                     }
                 }
 
@@ -583,7 +494,7 @@ fun NotificationCenterScreen(
                             .height(44.dp)
                             .testTag("open_attach_content_dialog_btn")
                     ) {
-                        Text("✨ שלח תוכן", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(AppStrings.tr("✨ שלח תוכן"), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
 
                     OutlinedButton(
@@ -599,7 +510,7 @@ fun NotificationCenterScreen(
                             .height(44.dp)
                             .testTag("open_actions_dialog_btn")
                     ) {
-                        Text("⚙️ פעולות ומודלים", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(AppStrings.tr("⚙️ פעולות ומודלים"), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                     }
                 }
 
@@ -617,17 +528,17 @@ fun NotificationCenterScreen(
                             .height(40.dp)
                             .testTag("recall_past_chats_btn")
                     ) {
-                        Text("🧠 מה דיברנו בשיחות הקודמות?", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(AppStrings.tr("🧠 מה דיברנו בשיחות הקודמות?"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     FilledTonalButton(
                         onClick = {
                             viewModel.startNewConversation()
-                            android.widget.Toast.makeText(context, "החלה שיחה חדשה! 🧹", android.widget.Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, AppStrings.tr("החלה שיחה חדשה! 🧹", "Started a new chat! 🧹"), Toast.LENGTH_SHORT).show()
                         },
                         modifier = Modifier.height(40.dp)
                     ) {
-                        Text("🧹 שיחה חדשה", fontSize = 11.sp)
+                        Text(AppStrings.tr("🧹 שיחה חדשה"), fontSize = 11.sp)
                     }
                 }
             }
@@ -654,16 +565,20 @@ fun NotificationCenterScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "זיכרון שיחה והמשכיות חכמה",
+                        text = AppStrings.tr("זיכרון שיחה והמשכיות חכמה"),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 Text(
-                    text = "• NotifAI זוכרת את הקשר השיחה הנוכחית וממשיכה אותה בכל שאלה שתקליד בהתראה.\n" +
+                    text = AppStrings.tr(
+                        he = "• NotifAI זוכרת את הקשר השיחה הנוכחית וממשיכה אותה בכל שאלה שתקליד בהתראה.\n" +
                             "• אם עוברות 3 שעות ללא אינטראקציה, המערכת מזהה זאת אוטומטית כנושא חדש.\n" +
-                            "• תוכל בכל שלב לשאול בהתראה: \"זוכר מה דיברנו בשיחות הקודמות?\" והיא תעביר ל-AI את כל ההיסטוריה השמורה!\n" +
-                            "• בלחיצה על כפתור \"📸 צילום מסך\" בהתראה או באפליקציה, נשלח צילום מסך מידי למודלי הראייה (Vision).",
+                            "• בלחיצה על כפתור \"📸 צילום מסך\" מתוך ההתראה, יוצג הסבר ותתבקש הרשאת צילום מסך לפי הצורך (ובמסך 'הגדרות' מופיע מרכז הרשאות מלא).",
+                        en = "• NotifAI remembers your active conversation context across inline replies.\n" +
+                            "• After 3 hours of inactivity, a new conversation topic starts automatically.\n" +
+                            "• Tapping \"📸 Screenshot\" explains and requests screenshot permission on demand (and a full Permissions Center is available in Settings)."
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

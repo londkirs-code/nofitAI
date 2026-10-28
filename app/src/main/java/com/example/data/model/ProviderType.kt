@@ -1,15 +1,69 @@
 package com.example.data.model
 
+/**
+ * Defines the task/modality category for routing requests and configuring keys/models:
+ * - TEXT: טקסט רגיל (שיחה, קוד, שאלות ותשובות)
+ * - IMAGE_INPUT: ניתוח תמונה / צילום מסך (Vision)
+ * - IMAGE_GEN: בקשה לייצור תמונה (Image Generation)
+ * - AUDIO_GEN: בקשה לייצור סאונד / דיבור / שיר (Audio & Speech Generation)
+ * - VIDEO_GEN: בקשה לייצור וידאו / אנימציה (Video Generation)
+ * - FILE_INPUT: בקשה המכילה קובץ / מסמך / שמע מוקלט
+ */
+enum class AiTaskType(
+    val titleHe: String,
+    val titleEn: String,
+    val shortBadgeHe: String,
+    val emoji: String
+) {
+    TEXT("טקסט רגיל", "Regular Text", "טקסט", "📝"),
+    IMAGE_INPUT("ניתוח תמונה (Vision)", "Image Analysis", "ראייה/תמונה", "👁️"),
+    IMAGE_GEN("ייצור תמונה", "Image Generation", "יצירת תמונה", "🎨"),
+    AUDIO_GEN("ייצור סאונד / שמע", "Audio Generation", "יצירת סאונד", "🔊"),
+    VIDEO_GEN("ייצור וידאו", "Video Generation", "יצירת וידאו", "🎬"),
+    FILE_INPUT("ניתוח קובץ / מסמך", "File Analysis", "קובץ", "📎");
+
+    companion object {
+        val DEFAULT_TASKS_CSV = "TEXT,IMAGE_INPUT,FILE_INPUT"
+
+        fun parseTasksCsv(csv: String?): Set<AiTaskType> {
+            if (csv.isNullOrBlank()) return setOf(TEXT, IMAGE_INPUT, FILE_INPUT)
+            val parsed = csv.split(",")
+                .mapNotNull { token ->
+                    entries.find { it.name.equals(token.trim(), ignoreCase = true) }
+                }
+                .toSet()
+            return if (parsed.isEmpty()) setOf(TEXT) else parsed
+        }
+
+        fun toCsv(tasks: Collection<AiTaskType>): String {
+            if (tasks.isEmpty()) return TEXT.name
+            return tasks.joinToString(",") { it.name }
+        }
+    }
+}
+
+/**
+ * Protocol format for Custom API Keys (Task #17)
+ */
+enum class CustomApiProtocol(
+    val displayName: String,
+    val defaultEndpointHint: String
+) {
+    OPENAI("OpenAI Compatible (/v1/chat/completions)", "https://api.example.com/v1/chat/completions"),
+    GEMINI("Google Gemini Format (:generateContent)", "https://generativelanguage.googleapis.com/v1beta"),
+    CLAUDE("Anthropic Claude Format (/v1/messages)", "https://api.anthropic.com/v1/messages")
+}
+
 enum class ProviderType(
     val displayName: String,
     val defaultModel: String,
     val suggestedModels: List<String>,
-    val defaultBaseUrl: String,
     val keyHint: String,
-    val documentationUrl: String
+    val documentationUrl: String,
+    val apiKeysWebUrl: String
 ) {
     GROQ(
-        displayName = "Groq (GroqCloud Playground)",
+        displayName = "Groq (חינמי ומהיר במיוחד)",
         defaultModel = "llama-3.3-70b-versatile",
         suggestedModels = listOf(
             "llama-3.3-70b-versatile",
@@ -19,9 +73,9 @@ enum class ProviderType(
             "llama-3.1-8b-instant",
             "gemma2-9b-it"
         ),
-        defaultBaseUrl = "https://api.groq.com/openai/v1",
         keyHint = "gsk_...",
-        documentationUrl = "console.groq.com/playground"
+        documentationUrl = "console.groq.com/keys",
+        apiKeysWebUrl = "https://console.groq.com/keys"
     ),
     GEMINI(
         displayName = "Google Gemini",
@@ -30,103 +84,124 @@ enum class ProviderType(
             "gemini-2.5-flash",
             "gemini-2.5-pro",
             "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
+            "gemini-2.0-flash-exp-image-generation",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash"
         ),
-        defaultBaseUrl = "https://generativelanguage.googleapis.com",
         keyHint = "AIzaSy...",
-        documentationUrl = "aistudio.google.com/apikey"
-    ),
-    DEEPSEEK(
-        displayName = "DeepSeek AI",
-        defaultModel = "deepseek-chat",
-        suggestedModels = listOf(
-            "deepseek-chat",
-            "deepseek-reasoner"
-        ),
-        defaultBaseUrl = "https://api.deepseek.com",
-        keyHint = "sk-...",
-        documentationUrl = "platform.deepseek.com"
+        documentationUrl = "aistudio.google.com/apikey",
+        apiKeysWebUrl = "https://aistudio.google.com/apikey"
     ),
     OPENROUTER(
-        displayName = "OpenRouter (חינמי ובתשלום)",
-        defaultModel = "meta-llama/llama-3.3-70b-instruct:free",
+        displayName = "OpenRouter (מודלים חינמיים ומתקדמים)",
+        defaultModel = "deepseek/deepseek-chat-v3-0324:free",
         suggestedModels = listOf(
-            "meta-llama/llama-3.3-70b-instruct:free",
+            "deepseek/deepseek-chat-v3-0324:free",
             "deepseek/deepseek-r1:free",
-            "deepseek/deepseek-chat:free",
             "google/gemini-2.0-flash-exp:free",
-            "qwen/qwen-2.5-72b-instruct:free",
-            "anthropic/claude-3.5-sonnet",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "qwen/qwq-32b:free",
+            "anthropic/claude-3.7-sonnet",
             "openai/gpt-4o"
         ),
-        defaultBaseUrl = "https://openrouter.ai/api/v1",
-        keyHint = "sk-or-...",
-        documentationUrl = "openrouter.ai/keys"
+        keyHint = "sk-or-v1-...",
+        documentationUrl = "openrouter.ai/keys",
+        apiKeysWebUrl = "https://openrouter.ai/keys"
+    ),
+    OPENAI(
+        displayName = "OpenAI (ChatGPT / DALL-E / TTS)",
+        defaultModel = "gpt-4o-mini",
+        suggestedModels = listOf(
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o3-mini",
+            "o1",
+            "gpt-4-turbo",
+            "dall-e-3",
+            "tts-1"
+        ),
+        keyHint = "sk-proj-...",
+        documentationUrl = "platform.openai.com/api-keys",
+        apiKeysWebUrl = "https://platform.openai.com/api-keys"
     ),
     CLAUDE(
         displayName = "Anthropic Claude",
         defaultModel = "claude-3-7-sonnet-latest",
         suggestedModels = listOf(
             "claude-3-7-sonnet-latest",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022",
-            "claude-3-opus-20240229"
+            "claude-3-5-sonnet-latest",
+            "claude-3-5-haiku-latest",
+            "claude-3-opus-latest"
         ),
-        defaultBaseUrl = "https://api.anthropic.com",
         keyHint = "sk-ant-...",
-        documentationUrl = "console.anthropic.com"
+        documentationUrl = "console.anthropic.com/settings/keys",
+        apiKeysWebUrl = "https://console.anthropic.com/settings/keys"
     ),
-    OPENAI(
-        displayName = "OpenAI",
-        defaultModel = "gpt-4o-mini",
+    DEEPSEEK(
+        displayName = "DeepSeek",
+        defaultModel = "deepseek-chat",
         suggestedModels = listOf(
-            "gpt-4o-mini",
-            "gpt-4o",
-            "o3-mini",
-            "o1-mini",
-            "gpt-4.5-preview"
+            "deepseek-chat",
+            "deepseek-reasoner"
         ),
-        defaultBaseUrl = "https://api.openai.com/v1",
-        keyHint = "sk-proj-...",
-        documentationUrl = "platform.openai.com/api-keys"
+        keyHint = "sk-...",
+        documentationUrl = "platform.deepseek.com/api_keys",
+        apiKeysWebUrl = "https://platform.deepseek.com/api_keys"
     ),
     GROK(
-        displayName = "xAI Grok",
-        defaultModel = "grok-3-latest",
+        displayName = "xAI (Grok)",
+        defaultModel = "grok-2-latest",
         suggestedModels = listOf(
             "grok-3-latest",
-            "grok-3-mini-latest",
             "grok-2-latest",
-            "grok-2-vision-latest"
+            "grok-2-vision-latest",
+            "grok-beta"
         ),
-        defaultBaseUrl = "https://api.x.ai/v1",
         keyHint = "xai-...",
-        documentationUrl = "console.x.ai"
+        documentationUrl = "console.x.ai",
+        apiKeysWebUrl = "https://console.x.ai"
     ),
     MISTRAL(
         displayName = "Mistral AI",
         defaultModel = "mistral-large-latest",
         suggestedModels = listOf(
             "mistral-large-latest",
+            "pixtral-large-latest",
             "codestral-latest",
             "mistral-small-latest",
             "open-mistral-nemo"
         ),
-        defaultBaseUrl = "https://api.mistral.ai/v1",
-        keyHint = "...",
-        documentationUrl = "console.mistral.ai"
+        keyHint = "מפתח Mistral...",
+        documentationUrl = "console.mistral.ai/api-keys",
+        apiKeysWebUrl = "https://console.mistral.ai/api-keys"
     ),
     HUGGINGFACE(
         displayName = "Hugging Face",
-        defaultModel = "meta-llama/Llama-3.2-3B-Instruct",
+        defaultModel = "Qwen/Qwen2.5-72B-Instruct",
         suggestedModels = listOf(
-            "meta-llama/Llama-3.2-3B-Instruct",
             "Qwen/Qwen2.5-72B-Instruct",
+            "meta-llama/Llama-3.3-70B-Instruct",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+            "black-forest-labs/FLUX.1-schnell",
             "mistralai/Mistral-7B-Instruct-v0.3"
         ),
-        defaultBaseUrl = "https://router.huggingface.co/hf-inference/v1",
         keyHint = "hf_...",
-        documentationUrl = "huggingface.co/settings/tokens"
+        documentationUrl = "huggingface.co/settings/tokens",
+        apiKeysWebUrl = "https://huggingface.co/settings/tokens"
+    ),
+    CUSTOM(
+        displayName = "מפתח מותאם אישית (Custom API)",
+        defaultModel = "gpt-4o-mini",
+        suggestedModels = listOf(
+            "gpt-4o",
+            "gpt-4o-mini",
+            "llama-3.3-70b-versatile",
+            "claude-3-7-sonnet-latest",
+            "gemini-2.5-flash",
+            "deepseek-chat"
+        ),
+        keyHint = "מפתח API מותאם אישית...",
+        documentationUrl = "הגדרת שרת API מותאם אישית",
+        apiKeysWebUrl = "https://openrouter.ai/keys"
     )
 }

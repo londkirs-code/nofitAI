@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">NotifAI</string>
+    <string name="notification_channel_name">NotifAI - Asistente IA en Notificaciones</string>
+    <string name="notification_channel_desc">Pregunta a la IA directamente desde el panel de notificaciones</string>
+    <string name="action_reply_label">Preguntar a la IA...</string>
+    <string name="action_attach_file">Enviar contenido</string>
+    <string name="action_actions_menu">Acciones</string>
+    <string name="accessibility_fast_screenshot_desc">Permite capturar la pantalla al instante con un solo toque desde la notificación de NotifAI sin diálogos repetidos.</string>
+    <string name="accessibility_service_desc">Permite capturar la pantalla al instante con un solo toque desde la notificación de NotifAI sin diálogos repetidos.</string>
+</resources>

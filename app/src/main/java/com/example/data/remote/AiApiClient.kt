@@ -2,6 +2,7 @@ package com.example.data.remote
 
 import android.util.Base64
 import com.example.data.model.AiModelInfo
+import com.example.data.model.CustomApiProtocol
 import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
 import kotlinx.coroutines.Dispatchers
@@ -14,9 +15,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import java.util.regex.Pattern
 
 sealed class AiCallException(message: String) : Exception(message) {
+    class SmartApiException(
+        val analyzed: AnalyzedApiError
+    ) : AiCallException(analyzed.hebrewSummary)
+
     class RateLimit(message: String, val retryAfterSeconds: Long) : AiCallException(message)
     class QuotaExceeded(message: String, val suspensionSeconds: Long) : AiCallException(message)
     class AuthenticationError(message: String) : AiCallException(message)
@@ -28,7 +32,10 @@ data class AiResponse(
     val text: String,
     val provider: ProviderType,
     val model: String,
-    val tokensUsed: Int = 0
+    val tokensUsed: Int = 0,
+    val generatedMediaBytes: ByteArray? = null,
+    val generatedMediaMimeType: String? = null,
+    val generatedMediaName: String? = null
 )
 
 data class AttachmentData(
@@ -46,7 +53,7 @@ class AiApiClient {
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(45, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(65, TimeUnit.SECONDS)
         .writeTimeout(45, TimeUnit.SECONDS)
         .build()
 
@@ -61,10 +68,26 @@ class AiApiClient {
         systemInstruction: String = "You are NotifAI, a smart and helpful AI assistant. Always respond in fluent Hebrew (unless asked otherwise) with complete, detailed, and well-structured answers. Never cut off or truncate your response.",
         temperature: Float = 0.7f,
         maxTokens: Int = 8192,
-        attachment: AttachmentData? = null
+        attachment: AttachmentData? = null,
+        customBaseUrl: String? = null,
+        customProtocol: String = "OPENAI"
     ): AiResponse = withContext(Dispatchers.IO) {
+        // Check if OpenAI DALL-E or TTS endpoint is appropriate
+        val lowerModel = model.lowercase()
+        if ((provider == ProviderType.OPENAI || (provider == ProviderType.CUSTOM && customProtocol == "OPENAI")) &&
+            (lowerModel.startsWith("dall-e") || lowerModel.startsWith("gpt-image"))
+        ) {
+            return@withContext callOpenAiImageGeneration(provider, apiKey, model, prompt, customBaseUrl)
+        }
+        if ((provider == ProviderType.OPENAI || (provider == ProviderType.CUSTOM && customProtocol == "OPENAI")) &&
+            (lowerModel.startsWith("tts-"))
+        ) {
+            return@withContext callOpenAiAudioTts(provider, apiKey, model, prompt, customBaseUrl)
+        }
+
         when (provider) {
             ProviderType.GEMINI -> callGemini(
+                provider = provider,
                 apiKey = apiKey,
                 model = model,
                 prompt = prompt,
@@ -72,9 +95,11 @@ class AiApiClient {
                 systemInstruction = systemInstruction,
                 temperature = temperature,
                 maxTokens = maxTokens,
-                attachment = attachment
+                attachment = attachment,
+                customBaseUrl = customBaseUrl
             )
             ProviderType.CLAUDE -> callClaude(
+                provider = provider,
                 apiKey = apiKey,
                 model = model,
                 prompt = prompt,
@@ -82,8 +107,49 @@ class AiApiClient {
                 systemInstruction = systemInstruction,
                 temperature = temperature,
                 maxTokens = maxTokens,
-                attachment = attachment
+                attachment = attachment,
+                customBaseUrl = customBaseUrl
             )
+            ProviderType.CUSTOM -> {
+                when (customProtocol.uppercase()) {
+                    CustomApiProtocol.GEMINI.name -> callGemini(
+                        provider = provider,
+                        apiKey = apiKey,
+                        model = model,
+                        prompt = prompt,
+                        history = history,
+                        systemInstruction = systemInstruction,
+                        temperature = temperature,
+                        maxTokens = maxTokens,
+                        attachment = attachment,
+                        customBaseUrl = customBaseUrl
+                    )
+                    CustomApiProtocol.CLAUDE.name -> callClaude(
+                        provider = provider,
+                        apiKey = apiKey,
+                        model = model,
+                        prompt = prompt,
+                        history = history,
+                        systemInstruction = systemInstruction,
+                        temperature = temperature,
+                        maxTokens = maxTokens,
+                        attachment = attachment,
+                        customBaseUrl = customBaseUrl
+                    )
+                    else -> callOpenAiCompatible(
+                        provider = provider,
+                        apiKey = apiKey,
+                        model = model,
+                        prompt = prompt,
+                        history = history,
+                        systemInstruction = systemInstruction,
+                        temperature = temperature,
+                        maxTokens = maxTokens,
+                        attachment = attachment,
+                        customBaseUrl = customBaseUrl
+                    )
+                }
+            }
             ProviderType.GROQ,
             ProviderType.GROK,
             ProviderType.OPENAI,
@@ -99,14 +165,12 @@ class AiApiClient {
                 systemInstruction = systemInstruction,
                 temperature = temperature,
                 maxTokens = maxTokens,
-                attachment = attachment
+                attachment = attachment,
+                customBaseUrl = customBaseUrl
             )
         }
     }
 
-    /**
-     * Queries the provider's live /models endpoint and returns a list of model IDs.
-     */
     suspend fun fetchAvailableModels(
         provider: ProviderType,
         apiKey: String
@@ -120,30 +184,35 @@ class AiApiClient {
     }
 
     /**
-     * Live query to each provider's API with active/free/chat validation and rich status metadata.
+     * Live query to each provider's API with automatic best-first sorting (Task #5).
      */
     suspend fun fetchAvailableModelsDetailed(
         provider: ProviderType,
-        apiKey: String
+        apiKey: String,
+        customBaseUrl: String? = null,
+        customProtocol: String = "OPENAI"
     ): FetchModelsResponse = withContext(Dispatchers.IO) {
         val trimmedKey = apiKey.trim()
         if (trimmedKey.isBlank()) {
-            return@withContext FetchModelsResponse(
-                isSuccess = false,
-                models = provider.suggestedModels.map {
+            val defaultSorted = AiModelInfo.sortBestFirst(
+                provider.suggestedModels.mapIndexed { idx, it ->
                     AiModelInfo(
                         id = it,
                         displayName = it,
                         isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
-                        isRecommended = true
+                        isRecommended = idx < 3
                     )
-                },
+                }
+            )
+            return@withContext FetchModelsResponse(
+                isSuccess = false,
+                models = defaultSorted,
                 errorMessage = "הזן מפתח API כדי לשלוף את רשימת המודלים הפעילים בזמן אמת"
             )
         }
 
         try {
-            when (provider) {
+            val rawResponse = when (provider) {
                 ProviderType.GEMINI -> fetchGeminiModels(trimmedKey)
                 ProviderType.GROQ -> fetchGroqModels(trimmedKey)
                 ProviderType.OPENROUTER -> fetchOpenRouterModels(trimmedKey)
@@ -153,20 +222,73 @@ class AiApiClient {
                 ProviderType.GROK -> fetchGrokModels(trimmedKey)
                 ProviderType.MISTRAL -> fetchMistralModels(trimmedKey)
                 ProviderType.HUGGINGFACE -> fetchHuggingFaceModels(trimmedKey)
+                ProviderType.CUSTOM -> fetchCustomModels(trimmedKey, customBaseUrl, customProtocol)
             }
+            rawResponse.copy(models = AiModelInfo.sortBestFirst(rawResponse.models))
         } catch (e: Exception) {
-            val fallback = provider.suggestedModels.map {
-                AiModelInfo(
-                    id = it,
-                    displayName = it,
-                    isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
-                    isRecommended = true
-                )
-            }
+            val fallback = AiModelInfo.sortBestFirst(
+                provider.suggestedModels.mapIndexed { idx, it ->
+                    AiModelInfo(
+                        id = it,
+                        displayName = it,
+                        isFree = provider == ProviderType.GROQ || it.contains("free", ignoreCase = true),
+                        isRecommended = idx < 3
+                    )
+                }
+            )
             FetchModelsResponse(
                 isSuccess = false,
                 models = fallback,
-                errorMessage = "שגיאת רשת בשליפת מודלים: ${e.localizedMessage ?: "לא ניתן להתחבר לשרת"}. מוצגים מודלים מומלצים כגיבוי."
+                errorMessage = "שגיאת רשת בשליפת מודלים: ${e.localizedMessage ?: "לא ניתן להתחבר לשרת"}. מוצגים מודלים מומלצים בראש הרשימה."
+            )
+        }
+    }
+
+    private fun fetchCustomModels(apiKey: String, customBaseUrl: String?, customProtocol: String): FetchModelsResponse {
+        val base = customBaseUrl?.trim()?.trimEnd('/')
+        if (base.isNullOrBlank()) {
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = AiModelInfo.sortBestFirst(
+                    ProviderType.CUSTOM.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+                )
+            )
+        }
+        val modelsUrl = when {
+            base.endsWith("/chat/completions") -> base.removeSuffix("/chat/completions") + "/models"
+            base.endsWith("/messages") -> base.removeSuffix("/messages") + "/models"
+            base.endsWith("/models") -> base
+            else -> "$base/models"
+        }
+        val reqBuilder = Request.Builder().url(modelsUrl).get()
+        if (customProtocol.equals("CLAUDE", true)) {
+            reqBuilder.addHeader("x-api-key", apiKey)
+            reqBuilder.addHeader("anthropic-version", "2023-06-01")
+        } else {
+            reqBuilder.addHeader("Authorization", "Bearer $apiKey")
+        }
+        httpClient.newCall(reqBuilder.build()).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                return FetchModelsResponse(
+                    isSuccess = false,
+                    models = ProviderType.CUSTOM.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
+                    errorMessage = "השרת המותאם החזיר קוד ${resp.code}. ניתן להזין שם מודל ידנית."
+                )
+            }
+            val body = resp.body?.string().orEmpty()
+            val json = JSONObject(body)
+            val arr = json.optJSONArray("data") ?: json.optJSONArray("models") ?: JSONArray()
+            val list = mutableListOf<AiModelInfo>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val id = obj.optString("id", obj.optString("name", "")).removePrefix("models/")
+                if (id.isNotBlank()) {
+                    list.add(AiModelInfo(id = id, displayName = obj.optString("displayName", id), isRecommended = i < 4))
+                }
+            }
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) list else ProviderType.CUSTOM.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
             )
         }
     }
@@ -178,16 +300,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = when (resp.code) {
-                    400 -> "מפתח Gemini אינו תקין (Error 400)"
-                    403 -> "המפתח חסום או שאין הרשאה לפרויקט ב-Gemini (Error 403)"
-                    429 -> "חרגת ממכסת הבקשות של Gemini (Error 429)"
-                    else -> "שגיאה ב-Gemini (${resp.code})"
-                }
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.GEMINI, "gemini")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.GEMINI.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -202,19 +319,26 @@ class AiApiClient {
                 var supportsGenerate = false
                 if (supportedMethods != null) {
                     for (j in 0 until supportedMethods.length()) {
-                        if (supportedMethods.optString(j) == "generateContent") {
+                        if (supportedMethods.optString(j) == "generateContent" || supportedMethods.optString(j) == "predict") {
                             supportsGenerate = true
                             break
                         }
                     }
                 }
                 if (!supportsGenerate) continue
-                if (!id.startsWith("gemini", ignoreCase = true)) continue
-                if (id.contains("vision", ignoreCase = true) || id.contains("embedding", ignoreCase = true) || id.contains("aqa", ignoreCase = true)) continue
+                if (!id.startsWith("gemini", ignoreCase = true) && !id.startsWith("imagen", ignoreCase = true)) continue
+                if (id.contains("embedding", ignoreCase = true) || id.contains("aqa", ignoreCase = true)) continue
 
                 val dispName = obj.optString("displayName", id)
                 val desc = obj.optString("description", "")
-                val isRec = id in listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro")
+                val isRec = id in listOf(
+                    "gemini-2.5-flash",
+                    "gemini-2.5-pro",
+                    "gemini-2.0-flash",
+                    "gemini-2.0-flash-exp-image-generation",
+                    "gemini-1.5-pro",
+                    "gemini-1.5-flash"
+                )
                 list.add(
                     AiModelInfo(
                         id = id,
@@ -225,8 +349,10 @@ class AiApiClient {
                     )
                 )
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenByDescending { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GEMINI.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.GEMINI.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) }
+            )
         }
     }
 
@@ -238,18 +364,18 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח Groq אינו תקין (401 Unauthorized)" else "שגיאת שרת Groq (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.GROQ, "groq")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.GROQ.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
             val json = JSONObject(body)
             val arr = json.optJSONArray("data") ?: JSONArray()
             val list = mutableListOf<AiModelInfo>()
-            val excluded = listOf("whisper", "tts", "embedding", "guard", "safeguard", "moderation", "distil-whisper")
+            val excluded = listOf("whisper", "embedding", "guard", "safeguard", "moderation", "distil-whisper")
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
                 val id = obj.optString("id", "")
@@ -258,7 +384,13 @@ class AiApiClient {
                 if (excluded.any { id.contains(it, ignoreCase = true) }) continue
 
                 val ctx = obj.optInt("context_window", 0).takeIf { it > 0 }
-                val isRec = id in listOf("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b", "meta-llama/llama-4-scout-17b-16e-instruct", "llama-3.1-8b-instant", "qwen-qwq-32b")
+                val isRec = id in listOf(
+                    "llama-3.3-70b-versatile",
+                    "deepseek-r1-distill-llama-70b",
+                    "meta-llama/llama-4-scout-17b-16e-instruct",
+                    "qwen-qwq-32b",
+                    "llama-3.1-8b-instant"
+                )
                 list.add(
                     AiModelInfo(
                         id = id,
@@ -269,8 +401,10 @@ class AiApiClient {
                     )
                 )
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GROQ.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.GROQ.suggestedModels.map { AiModelInfo(it, it, isFree = true, isRecommended = true) }
+            )
         }
     }
 
@@ -285,17 +419,18 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.OPENROUTER, "openrouter")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) },
-                    errorMessage = "שגיאה ב-OpenRouter (${resp.code})"
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
             val json = JSONObject(body)
             val arr = json.optJSONArray("data") ?: JSONArray()
             val list = mutableListOf<AiModelInfo>()
-            val excluded = listOf("whisper", "tts", "embedding", "moderation")
+            val excluded = listOf("whisper", "embedding", "moderation")
             for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
                 val id = obj.optString("id", "")
@@ -310,7 +445,8 @@ class AiApiClient {
                 val desc = obj.optString("description", "")
 
                 val disp = if (isFree && !name.contains("free", ignoreCase = true)) "$name (חינמי)" else name
-                val isRec = isFree || id in listOf("anthropic/claude-3.5-sonnet", "openai/gpt-4o", "deepseek/deepseek-chat")
+                val isRec = id in ProviderType.OPENROUTER.suggestedModels ||
+                        (isFree && (id.contains("deepseek") || id.contains("gemini") || id.contains("llama-3.3") || id.contains("qwen")))
 
                 list.add(
                     AiModelInfo(
@@ -323,9 +459,10 @@ class AiApiClient {
                     )
                 )
             }
-            // Sort: Free models first, then recommended, then alphabetical
-            list.sortWith(compareByDescending<AiModelInfo> { it.isFree }.thenByDescending { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list.take(80) else ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list).take(100) else ProviderType.OPENROUTER.suggestedModels.map { AiModelInfo(it, it, isFree = it.contains("free")) }
+            )
         }
     }
 
@@ -337,11 +474,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח DeepSeek אינו תקין (401)" else "שגיאה ב-DeepSeek (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.DEEPSEEK, "deepseek")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.DEEPSEEK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -357,7 +494,7 @@ class AiApiClient {
             if (list.isEmpty()) {
                 list.addAll(ProviderType.DEEPSEEK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
             }
-            return FetchModelsResponse(isSuccess = true, models = list)
+            return FetchModelsResponse(isSuccess = true, models = AiModelInfo.sortBestFirst(list))
         }
     }
 
@@ -370,11 +507,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח Anthropic Claude שגוי או לא מורשה (401)" else "שגיאה ב-Claude (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.CLAUDE, "claude")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.CLAUDE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -390,8 +527,10 @@ class AiApiClient {
                     list.add(AiModelInfo(id = id, displayName = disp, isRecommended = isRec))
                 }
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.CLAUDE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.CLAUDE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+            )
         }
     }
 
@@ -403,30 +542,33 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח OpenAI שגוי או שאין הרשאה (401)" else "שגיאה ב-OpenAI (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.OPENAI, "gpt-4o")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.OPENAI.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
             val json = JSONObject(body)
             val arr = json.optJSONArray("data") ?: JSONArray()
             val list = mutableListOf<AiModelInfo>()
-            val excluded = listOf("whisper", "tts", "embedding", "dall-e", "babbage", "davinci", "moderation", "realtime", "audio", "instruct", "canary")
+            val excluded = listOf("whisper", "embedding", "babbage", "davinci", "moderation", "realtime", "instruct", "canary")
             for (i in 0 until arr.length()) {
                 val id = arr.getJSONObject(i).optString("id", "")
                 if (id.isBlank()) continue
                 if (excluded.any { id.contains(it, ignoreCase = true) }) continue
-                val isChat = id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("chatgpt-")
-                if (!isChat) continue
+                val isSupported = id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") ||
+                        id.startsWith("chatgpt-") || id.startsWith("dall-e") || id.startsWith("tts-")
+                if (!isSupported) continue
 
-                val isRec = id in listOf("gpt-4o-mini", "gpt-4o", "o3-mini", "o1-mini")
+                val isRec = id in listOf("gpt-4o", "gpt-4o-mini", "o3-mini", "o1-mini", "dall-e-3", "tts-1")
                 list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.OPENAI.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.OPENAI.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+            )
         }
     }
 
@@ -438,11 +580,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח xAI Grok שגוי (401)" else "שגיאה ב-Grok (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.GROK, "grok")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.GROK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -456,8 +598,10 @@ class AiApiClient {
                     list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
                 }
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.GROK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.GROK.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+            )
         }
     }
 
@@ -469,11 +613,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                val msg = if (resp.code == 401) "מפתח Mistral אינו תקין (401)" else "שגיאה ב-Mistral (${resp.code})"
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.MISTRAL, "mistral")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.MISTRAL.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = msg
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -483,12 +627,14 @@ class AiApiClient {
             for (i in 0 until arr.length()) {
                 val id = arr.getJSONObject(i).optString("id", "")
                 if (id.isNotBlank() && !id.contains("embed", ignoreCase = true)) {
-                    val isRec = id in listOf("mistral-large-latest", "codestral-latest", "mistral-small-latest")
+                    val isRec = id in listOf("mistral-large-latest", "pixtral-large-latest", "codestral-latest", "mistral-small-latest")
                     list.add(AiModelInfo(id = id, displayName = id, isRecommended = isRec))
                 }
             }
-            list.sortWith(compareByDescending<AiModelInfo> { it.isRecommended }.thenBy { it.id })
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.MISTRAL.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.MISTRAL.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+            )
         }
     }
 
@@ -502,10 +648,11 @@ class AiApiClient {
             .build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
+                val analyzed = ApiErrorAnalyzer.analyzeHttpError(resp.code, resp.headers, resp.body?.string().orEmpty(), ProviderType.HUGGINGFACE, "hf")
                 return FetchModelsResponse(
                     isSuccess = false,
                     models = ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) },
-                    errorMessage = "שגיאה ב-Hugging Face (${resp.code})"
+                    errorMessage = analyzed.hebrewSummary
                 )
             }
             val body = resp.body?.string().orEmpty()
@@ -517,11 +664,130 @@ class AiApiClient {
                     list.add(AiModelInfo(id = id, displayName = id, isRecommended = i < 5))
                 }
             }
-            return FetchModelsResponse(isSuccess = true, models = if (list.isNotEmpty()) list else ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) })
+            return FetchModelsResponse(
+                isSuccess = true,
+                models = if (list.isNotEmpty()) AiModelInfo.sortBestFirst(list) else ProviderType.HUGGINGFACE.suggestedModels.map { AiModelInfo(it, it, isRecommended = true) }
+            )
+        }
+    }
+
+    private fun callOpenAiImageGeneration(
+        provider: ProviderType,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        customBaseUrl: String?
+    ): AiResponse {
+        val base = customBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: "https://api.openai.com/v1"
+        val url = if (base.endsWith("/images/generations")) base else "${base.removeSuffix("/chat/completions")}/images/generations"
+        val rootJson = JSONObject().apply {
+            put("model", model)
+            put("prompt", prompt)
+            put("n", 1)
+            put("size", "1024x1024")
+            put("response_format", "b64_json")
+        }
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(rootJson.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        return executeAndParse(request, provider, model) { responseBody, _ ->
+            val json = JSONObject(responseBody)
+            val dataArr = json.optJSONArray("data")
+            if (dataArr != null && dataArr.length() > 0) {
+                val first = dataArr.getJSONObject(0)
+                val b64 = first.optString("b64_json", "")
+                val revisedPrompt = first.optString("revised_prompt", "התמונה נוצרה בהצלחה על ידי $model 🎨")
+                if (b64.isNotBlank()) {
+                    val bytes = Base64.decode(b64, Base64.DEFAULT)
+                    return@executeAndParse AiResponse(
+                        text = revisedPrompt,
+                        provider = provider,
+                        model = model,
+                        tokensUsed = 0,
+                        generatedMediaBytes = bytes,
+                        generatedMediaMimeType = "image/png",
+                        generatedMediaName = "dalle_generated.png"
+                    )
+                }
+                val imgUrl = first.optString("url", "")
+                if (imgUrl.isNotBlank()) {
+                    val bytes = downloadUrlBytes(imgUrl)
+                    return@executeAndParse AiResponse(
+                        text = "$revisedPrompt\n$imgUrl",
+                        provider = provider,
+                        model = model,
+                        tokensUsed = 0,
+                        generatedMediaBytes = bytes,
+                        generatedMediaMimeType = "image/png",
+                        generatedMediaName = "dalle_generated.png"
+                    )
+                }
+            }
+            AiResponse("התמונה נוצרה על ידי $model", provider, model, 0)
+        }
+    }
+
+    private fun callOpenAiAudioTts(
+        provider: ProviderType,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        customBaseUrl: String?
+    ): AiResponse {
+        val base = customBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: "https://api.openai.com/v1"
+        val url = if (base.endsWith("/audio/speech")) base else "${base.removeSuffix("/chat/completions")}/audio/speech"
+        val rootJson = JSONObject().apply {
+            put("model", model)
+            put("input", prompt)
+            put("voice", "alloy")
+            put("response_format", "mp3")
+        }
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(rootJson.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        val response = try {
+            httpClient.newCall(request).execute()
+        } catch (e: IOException) {
+            throw AiCallException.ServerUnavailable("בעיית תקשורת לרשת: ${e.message}", 30L)
+        }
+        if (response.isSuccessful) {
+            val bytes = response.body?.bytes()
+            return AiResponse(
+                text = "🔊 קובץ השמע הופק בהצלחה על ידי $model:\n\"${prompt.take(200)}\"",
+                provider = provider,
+                model = model,
+                tokensUsed = 0,
+                generatedMediaBytes = bytes,
+                generatedMediaMimeType = "audio/mpeg",
+                generatedMediaName = "tts_speech.mp3"
+            )
+        }
+        val errBody = response.body?.string().orEmpty()
+        val analyzed = ApiErrorAnalyzer.analyzeHttpError(response.code, response.headers, errBody, provider, model)
+        throw AiCallException.SmartApiException(analyzed)
+    }
+
+    private fun downloadUrlBytes(url: String): ByteArray? {
+        return try {
+            val req = Request.Builder().url(url).get().build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) resp.body?.bytes() else null
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
     private fun callGemini(
+        provider: ProviderType,
         apiKey: String,
         model: String,
         prompt: String,
@@ -529,9 +795,16 @@ class AiApiClient {
         systemInstruction: String,
         temperature: Float,
         maxTokens: Int,
-        attachment: AttachmentData?
+        attachment: AttachmentData?,
+        customBaseUrl: String? = null
     ): AiResponse {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+        val base = customBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            ?: "https://generativelanguage.googleapis.com/v1beta"
+        val url = if (base.contains(":generateContent")) {
+            if (base.contains("key=")) base else "$base?key=$apiKey"
+        } else {
+            "$base/models/$model:generateContent?key=$apiKey"
+        }
 
         val rootJson = JSONObject()
 
@@ -544,12 +817,10 @@ class AiApiClient {
         // Contents array
         val contentsArray = JSONArray()
 
-        // Add history turns with alternating roles
         var lastRole: String? = null
         for (turn in history) {
             if (turn.content.isBlank()) continue
             val geminiRole = if (turn.role == "assistant") "model" else "user"
-            // Avoid duplicate consecutive roles for Gemini API requirements
             if (geminiRole == lastRole) continue
 
             val contentObj = JSONObject()
@@ -560,12 +831,11 @@ class AiApiClient {
             lastRole = geminiRole
         }
 
-        // Current turn
         val userContent = JSONObject()
         userContent.put("role", "user")
 
         val partsArray = JSONArray()
-        if (attachment != null && (attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("audio/"))) {
+        if (attachment != null && (attachment.mimeType.startsWith("image/") || attachment.mimeType.startsWith("audio/") || attachment.mimeType.startsWith("video/") || attachment.mimeType == "application/pdf")) {
             val inlineData = JSONObject()
             inlineData.put("mimeType", attachment.mimeType)
             inlineData.put("data", Base64.encodeToString(attachment.bytes, Base64.NO_WRAP))
@@ -583,7 +853,6 @@ class AiApiClient {
 
         rootJson.put("contents", contentsArray)
 
-        // Generation config (Playground parameters)
         val genConfig = JSONObject()
         genConfig.put("temperature", temperature.toDouble())
         genConfig.put("maxOutputTokens", maxTokens)
@@ -597,30 +866,55 @@ class AiApiClient {
             .post(rootJson.toString().toRequestBody(jsonMediaType))
             .build()
 
-        return executeAndParse(request, ProviderType.GEMINI, model) { responseBody, _ ->
+        return executeAndParse(request, provider, model) { responseBody, _ ->
             val json = JSONObject(responseBody)
             val candidates = json.optJSONArray("candidates")
             if (candidates == null || candidates.length() == 0) {
                 val promptFeedback = json.optJSONObject("promptFeedback")
-                throw AiCallException.GeneralError("Gemini blocked response: ${promptFeedback?.toString() ?: "Empty candidate list"}")
+                throw AiCallException.GeneralError("Gemini חסם את התשובה: ${promptFeedback?.toString() ?: "רשימת תשובות ריקה"}")
             }
             val content = candidates.getJSONObject(0).getJSONObject("content")
             val parts = content.getJSONArray("parts")
             val sb = StringBuilder()
+            var inlineMediaBytes: ByteArray? = null
+            var inlineMediaMime: String? = null
+
             for (i in 0 until parts.length()) {
                 val part = parts.getJSONObject(i)
                 if (part.has("text")) {
                     sb.append(part.getString("text"))
                 }
+                if (part.has("inlineData")) {
+                    val inlineObj = part.getJSONObject("inlineData")
+                    val b64 = inlineObj.optString("data", "")
+                    val mime = inlineObj.optString("mimeType", "image/png")
+                    if (b64.isNotBlank()) {
+                        inlineMediaBytes = Base64.decode(b64, Base64.DEFAULT)
+                        inlineMediaMime = mime
+                    }
+                }
             }
             val usage = json.optJSONObject("usageMetadata")
             val tokens = usage?.optInt("totalTokenCount", 0) ?: 0
 
-            AiResponse(sb.toString().trim(), ProviderType.GEMINI, model, tokens)
+            val finalText = sb.toString().trim().ifBlank {
+                if (inlineMediaBytes != null) "🎨 קובץ מדיה נוצר בהצלחה על ידי $model" else ""
+            }
+
+            AiResponse(
+                text = finalText,
+                provider = provider,
+                model = model,
+                tokensUsed = tokens,
+                generatedMediaBytes = inlineMediaBytes,
+                generatedMediaMimeType = inlineMediaMime,
+                generatedMediaName = if (inlineMediaMime?.startsWith("audio") == true) "gemini_audio.wav" else "gemini_image.png"
+            )
         }
     }
 
     private fun callClaude(
+        provider: ProviderType,
         apiKey: String,
         model: String,
         prompt: String,
@@ -628,9 +922,10 @@ class AiApiClient {
         systemInstruction: String,
         temperature: Float,
         maxTokens: Int,
-        attachment: AttachmentData?
+        attachment: AttachmentData?,
+        customBaseUrl: String? = null
     ): AiResponse {
-        val url = "https://api.anthropic.com/v1/messages"
+        val url = customBaseUrl?.trim()?.takeIf { it.isNotBlank() } ?: "https://api.anthropic.com/v1/messages"
 
         val rootJson = JSONObject()
         rootJson.put("model", model)
@@ -695,7 +990,7 @@ class AiApiClient {
             .post(rootJson.toString().toRequestBody(jsonMediaType))
             .build()
 
-        return executeAndParse(request, ProviderType.CLAUDE, model) { responseBody, _ ->
+        return executeAndParse(request, provider, model) { responseBody, _ ->
             val json = JSONObject(responseBody)
             val content = json.getJSONArray("content")
             val sb = StringBuilder()
@@ -709,7 +1004,7 @@ class AiApiClient {
             val inputTokens = usage?.optInt("input_tokens", 0) ?: 0
             val outputTokens = usage?.optInt("output_tokens", 0) ?: 0
 
-            AiResponse(sb.toString().trim(), ProviderType.CLAUDE, model, inputTokens + outputTokens)
+            AiResponse(sb.toString().trim(), provider, model, inputTokens + outputTokens)
         }
     }
 
@@ -722,23 +1017,29 @@ class AiApiClient {
         systemInstruction: String,
         temperature: Float,
         maxTokens: Int,
-        attachment: AttachmentData?
+        attachment: AttachmentData?,
+        customBaseUrl: String? = null
     ): AiResponse {
-        val endpoint = when (provider) {
-            ProviderType.GROQ -> "https://api.groq.com/openai/v1/chat/completions"
-            ProviderType.GROK -> "https://api.x.ai/v1/chat/completions"
-            ProviderType.OPENAI -> "https://api.openai.com/v1/chat/completions"
-            ProviderType.OPENROUTER -> "https://openrouter.ai/api/v1/chat/completions"
-            ProviderType.DEEPSEEK -> "https://api.deepseek.com/chat/completions"
-            ProviderType.MISTRAL -> "https://api.mistral.ai/v1/chat/completions"
-            ProviderType.HUGGINGFACE -> "https://router.huggingface.co/hf-inference/v1/chat/completions"
-            else -> "https://api.openai.com/v1/chat/completions"
+        val endpoint = if (!customBaseUrl.isNullOrBlank()) {
+            val trimmed = customBaseUrl.trim().trimEnd('/')
+            if (trimmed.endsWith("/chat/completions")) trimmed else "$trimmed/chat/completions"
+        } else {
+            when (provider) {
+                ProviderType.GROQ -> "https://api.groq.com/openai/v1/chat/completions"
+                ProviderType.GROK -> "https://api.x.ai/v1/chat/completions"
+                ProviderType.OPENAI -> "https://api.openai.com/v1/chat/completions"
+                ProviderType.OPENROUTER -> "https://openrouter.ai/api/v1/chat/completions"
+                ProviderType.DEEPSEEK -> "https://api.deepseek.com/chat/completions"
+                ProviderType.MISTRAL -> "https://api.mistral.ai/v1/chat/completions"
+                ProviderType.HUGGINGFACE -> "https://router.huggingface.co/hf-inference/v1/chat/completions"
+                ProviderType.CUSTOM -> "https://api.openai.com/v1/chat/completions"
+                else -> "https://api.openai.com/v1/chat/completions"
+            }
         }
 
         val rootJson = JSONObject()
         rootJson.put("model", model)
 
-        // Reasoning models compatibility (OpenAI o1, o3, DeepSeek R1, QwQ, etc.)
         val isOpenAiReasoningModel = provider == ProviderType.OPENAI &&
                 (model.startsWith("o1", ignoreCase = true) || model.startsWith("o3", ignoreCase = true))
 
@@ -750,14 +1051,12 @@ class AiApiClient {
 
         if (isOpenAiReasoningModel) {
             rootJson.put("max_completion_tokens", effectiveMaxTokens)
-            // Note: temperature is intentionally omitted for OpenAI o1/o3 models as per API specs
         } else {
             rootJson.put("temperature", temperature.toDouble())
             rootJson.put("max_tokens", effectiveMaxTokens)
         }
 
         if (provider == ProviderType.OPENROUTER) {
-            // Prevent reasoning tokens on OpenRouter from starving the visible response text
             val reasoningObj = JSONObject().apply {
                 put("exclude", true)
             }
@@ -765,14 +1064,12 @@ class AiApiClient {
         }
 
         val messagesArray = JSONArray()
-        // System message (for o1/o3 modern endpoints use developer role if OpenAI)
         val sysMsg = JSONObject()
         val sysRole = if (isOpenAiReasoningModel) "developer" else "system"
         sysMsg.put("role", sysRole)
         sysMsg.put("content", systemInstruction)
         messagesArray.put(sysMsg)
 
-        // Historical messages
         for (turn in history) {
             if (turn.content.isBlank()) continue
             val role = if (turn.role == "assistant") "assistant" else "user"
@@ -782,7 +1079,6 @@ class AiApiClient {
             messagesArray.put(msgObj)
         }
 
-        // Current User message
         val userMsg = JSONObject()
         userMsg.put("role", "user")
 
@@ -835,7 +1131,7 @@ class AiApiClient {
             val json = JSONObject(responseBody)
             val choices = json.getJSONArray("choices")
             if (choices.length() == 0) {
-                throw AiCallException.GeneralError("Empty response choices from ${provider.displayName}")
+                throw AiCallException.GeneralError("התקבלה תשובה ריקה מ-${provider.displayName}")
             }
             val firstChoice = choices.getJSONObject(0)
             val msgObj = firstChoice.getJSONObject("message")
@@ -858,7 +1154,6 @@ class AiApiClient {
                 else -> msgObj.optString("content", "")
             }
 
-            // Clean <think>...</think> blocks if present while preserving full answer
             val cleanedContent = if (rawContent.contains("<think>") && rawContent.contains("</think>")) {
                 val stripped = rawContent.replace(Regex("<think>[\\s\\S]*?</think>"), "").trim()
                 stripped.ifBlank { rawContent.trim() }
@@ -888,7 +1183,10 @@ class AiApiClient {
         val response = try {
             httpClient.newCall(request).execute()
         } catch (e: IOException) {
-            throw AiCallException.ServerUnavailable("בעיית תקשורת לרשת: ${e.message}", 30L)
+            throw AiCallException.ServerUnavailable(
+                "🌐 בעיית חיבור לרשת מול ${provider.displayName} [מודל '$model']: ${e.localizedMessage ?: "בדוק חיבור אינטרנט"}",
+                25L
+            )
         }
 
         val responseBody = response.body?.string().orEmpty()
@@ -904,82 +1202,14 @@ class AiApiClient {
             }
         }
 
-        // Handle error responses & quota limits
-        val retryAfterHeader = response.header("Retry-After") ?: response.header("x-ratelimit-reset-requests")
-        val resetSeconds = parseRetryAfter(retryAfterHeader, responseBody)
-
-        val isQuotaExhausted = responseBody.contains("quota", ignoreCase = true) ||
-                responseBody.contains("RESOURCE_EXHAUSTED", ignoreCase = true) ||
-                responseBody.contains("insufficient_quota", ignoreCase = true) ||
-                responseBody.contains("credit_limit", ignoreCase = true) ||
-                responseBody.contains("exceeded your current quota", ignoreCase = true)
-
-        val isRateLimit = code == 429 ||
-                responseBody.contains("rate_limit", ignoreCase = true) ||
-                responseBody.contains("Too Many Requests", ignoreCase = true)
-
-        if (isQuotaExhausted) {
-            val cooldown = if (resetSeconds > 0) resetSeconds else 3600L
-            val message = extractErrorMessage(responseBody) ?: "נגמרה מכסת השימוש בספק ${provider.displayName}"
-            throw AiCallException.QuotaExceeded(message, cooldown)
-        }
-
-        if (isRateLimit) {
-            val cooldown = if (resetSeconds > 0) resetSeconds else 60L
-            val message = extractErrorMessage(responseBody) ?: "חריגה מקצב הבקשות (Rate Limit) ב-${provider.displayName}"
-            throw AiCallException.RateLimit(message, cooldown)
-        }
-
-        if (code == 401 || code == 403) {
-            val message = extractErrorMessage(responseBody) ?: "מפתח ה-API אינו תקין או חסר הרשאות"
-            throw AiCallException.AuthenticationError("${provider.displayName}: $message")
-        }
-
-        if (code in 500..599) {
-            throw AiCallException.ServerUnavailable("שרת ${provider.displayName} אינו זמין כרגע (קוד $code)", 45L)
-        }
-
-        val message = extractErrorMessage(responseBody) ?: "שגיאה $code משרת ${provider.displayName}"
-        throw AiCallException.GeneralError(message, code)
-    }
-
-    private fun parseRetryAfter(header: String?, body: String): Long {
-        if (!header.isNullOrBlank()) {
-            try {
-                val clean = header.trim().removeSuffix("s")
-                return clean.toDouble().toLong()
-            } catch (_: Exception) {}
-        }
-        val pattern = Pattern.compile("in\\s+(\\d+(?:\\.\\d+)?)\\s*(seconds?|minutes?|hours?|s|m|h)", Pattern.CASE_INSENSITIVE)
-        val matcher = pattern.matcher(body)
-        if (matcher.find()) {
-            val value = matcher.group(1)?.toDoubleOrNull()?.toLong() ?: return 0L
-            val unit = matcher.group(2)?.lowercase().orEmpty()
-            return when {
-                unit.startsWith("m") -> value * 60
-                unit.startsWith("h") -> value * 3600
-                else -> maxOf(1L, value)
-            }
-        }
-        return 0L
-    }
-
-    private fun extractErrorMessage(body: String): String? {
-        if (body.isBlank()) return null
-        return try {
-            val json = JSONObject(body)
-            if (json.has("error")) {
-                val errorObj = json.get("error")
-                if (errorObj is JSONObject) {
-                    errorObj.optString("message", null) ?: errorObj.optString("code", null)
-                } else {
-                    errorObj.toString()
-                }
-            } else {
-                json.optString("message", null)
-            }
-        } catch (_: Exception) {
-            null
-        }
+        // Smart Hebrew Error Analysis (Task #9)
+        val analyzed = ApiErrorAnalyzer.analyzeHttpError(
+            code = code,
+            headers = response.headers,
+            responseBody = responseBody,
+            provider = provider,
+            model = model
+        )
+        throw AiCallException.SmartApiException(analyzed)
     }
 }

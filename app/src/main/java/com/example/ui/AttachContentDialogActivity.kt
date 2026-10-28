@@ -33,9 +33,14 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,15 +61,21 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
@@ -72,14 +83,19 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -87,8 +103,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -115,18 +132,22 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.example.NotifAiApplication
 import com.example.data.model.AiModelInfo
+import com.example.data.model.AiTaskType
 import com.example.data.model.ApiKeyEntity
-import com.example.receiver.NotificationActionReceiver
+import com.example.data.repository.AiRepository
 import com.example.service.FastScreenCaptureAccessibilityService
 import com.example.service.NotificationChatService
+import com.example.ui.components.MessageAttachmentView
 import com.example.ui.dialogs.AddKeyDialog
 import com.example.ui.theme.NotifAiTheme
+import com.example.util.AppStrings
+import com.example.util.MediaStorageManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -146,11 +167,13 @@ class AttachContentDialogActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppStrings.initFromPrefs(this)
         initialModeState = resolveModeFromIntent(intent)
 
         setContent {
+            val currentLang = AppStrings.langOverrideState
             NotifAiTheme {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                CompositionLocalProvider(LocalLayoutDirection provides AppStrings.layoutDirection()) {
                     AttachContentDialogScreen(
                         initialMode = initialModeState,
                         onDismiss = { finish() }
@@ -189,12 +212,10 @@ fun AttachContentDialogScreen(
     var currentMode by remember(initialMode) { mutableStateOf(initialMode) }
     var showCloseNotificationConfirm by remember { mutableStateOf(false) }
 
-    // Selected file state
     var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
     var selectedFileName by remember { mutableStateOf("") }
     var selectedFileSizeStr by remember { mutableStateOf("") }
 
-    // File picker launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -217,14 +238,17 @@ fun AttachContentDialogScreen(
             shape = RoundedCornerShape(24.dp),
             title = {
                 Text(
-                    text = "סגירת התראת NotifAI",
+                    text = AppStrings.tr("סגירת התראת NotifAI", "Close NotifAI Notification"),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             },
             text = {
                 Text(
-                    text = "האם אתה בטוח שברצונך לסגור ולהסיר את התראת NotifAI מווילון ההתראות?\n\nהתראה זו תופעל שוב אוטומטית בכניסה הבאה לאפליקציה.",
+                    text = AppStrings.tr(
+                        "האם אתה בטוח שברצונך לסגור ולהסיר את התראת NotifAI מווילון ההתראות?\n\nהתראה זו תופעל שוב אוטומטית בכניסה הבאה לאפליקציה.",
+                        "Are you sure you want to close and remove the NotifAI notification from the notification shade?\n\nIt will automatically activate again next time you open the app."
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -234,7 +258,11 @@ fun AttachContentDialogScreen(
                     onClick = {
                         showCloseNotificationConfirm = false
                         NotificationChatService.stopService(context)
-                        Toast.makeText(context, "התראת NotifAI נסגרה", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr("התראת NotifAI נסגרה", "NotifAI notification closed"),
+                            Toast.LENGTH_SHORT
+                        ).show()
                         onDismiss()
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -242,7 +270,7 @@ fun AttachContentDialogScreen(
                     ),
                     modifier = Modifier.testTag("confirm_close_notification_btn")
                 ) {
-                    Text("כן, סגור התראה", fontWeight = FontWeight.Bold)
+                    Text(AppStrings.tr("כן, סגור התראה", "Yes, Close Notification"), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -250,7 +278,7 @@ fun AttachContentDialogScreen(
                     onClick = { showCloseNotificationConfirm = false },
                     modifier = Modifier.testTag("cancel_close_notification_btn")
                 ) {
-                    Text("ביטול")
+                    Text(AppStrings.tr("ביטול", "Cancel"))
                 }
             }
         )
@@ -275,7 +303,7 @@ fun AttachContentDialogScreen(
                 .widthIn(max = 660.dp)
                 .fillMaxWidth(0.96f)
                 .padding(horizontal = 6.dp, vertical = 12.dp)
-                .clickable(enabled = false) {}, // prevent dismissing when tapping card
+                .clickable(enabled = false) {},
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 8.dp,
@@ -287,7 +315,6 @@ fun AttachContentDialogScreen(
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                // Header Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -306,7 +333,7 @@ fun AttachContentDialogScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = "חזרה לתפריט"
+                                    contentDescription = AppStrings.tr("חזרה לתפריט", "Back to menu")
                                 )
                             }
                         }
@@ -342,22 +369,22 @@ fun AttachContentDialogScreen(
                         Column {
                             Text(
                                 text = when (currentMode) {
-                                    AttachDialogMode.MENU -> "שלח תוכן ל-NotifAI"
-                                    AttachDialogMode.ACTIONS -> "פעולות וניהול מודלים"
-                                    AttachDialogMode.VOICE_RECORD -> "הקלטת קול ישירה"
-                                    AttachDialogMode.SPEECH_TO_TEXT -> "דיבור לטקסט בעברית"
-                                    AttachDialogMode.FILE_SELECTED -> "העלאת קובץ מצורף"
+                                    AttachDialogMode.MENU -> AppStrings.tr("שלח תוכן ל-NotifAI", "Send Content to NotifAI")
+                                    AttachDialogMode.ACTIONS -> AppStrings.tr("פעולות, פלט וניהול מפתחות", "Actions, Output & Key Management")
+                                    AttachDialogMode.VOICE_RECORD -> AppStrings.tr("הקלטת קול מיידית", "Instant Voice Recording")
+                                    AttachDialogMode.SPEECH_TO_TEXT -> AppStrings.tr("דיבור לטקסט (שליחה מיידית)", "Speech-to-Text (Instant Send)")
+                                    AttachDialogMode.FILE_SELECTED -> AppStrings.tr("העלאת קובץ מצורף", "Upload Attachment")
                                 },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = when (currentMode) {
-                                    AttachDialogMode.MENU -> "בחר כיצד להזין תוכן ל-AI"
-                                    AttachDialogMode.ACTIONS -> "העתקה, שיתוף, בחירת מודל או סגירת התראה"
-                                    AttachDialogMode.VOICE_RECORD -> "הקלט שמע ושלח לפענוח"
-                                    AttachDialogMode.SPEECH_TO_TEXT -> "המרת קול לטקסט בזמן אמת"
-                                    AttachDialogMode.FILE_SELECTED -> "אישור ושליחה"
+                                    AttachDialogMode.MENU -> AppStrings.tr("בחר כיצד להזין תוכן ל-AI", "Choose how to send content to AI")
+                                    AttachDialogMode.ACTIONS -> AppStrings.tr("העתקה, ניקוי, שיחה חדשה, סוג פלט ומפתחות", "Copy, clear, new chat, output type & keys")
+                                    AttachDialogMode.VOICE_RECORD -> AppStrings.tr("ההקלטה מתחילה מיד עם הפתיחה", "Recording starts immediately on open")
+                                    AttachDialogMode.SPEECH_TO_TEXT -> AppStrings.tr("מקשיב ושולח מיד (לחץ לעריכה לביטול שליחה אוטומטית)", "Listens & sends immediately (tap to edit)")
+                                    AttachDialogMode.FILE_SELECTED -> AppStrings.tr("אישור ושליחה", "Confirm & send")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -373,7 +400,7 @@ fun AttachContentDialogScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "סגור",
+                            contentDescription = AppStrings.tr("סגור", "Close"),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -384,7 +411,6 @@ fun AttachContentDialogScreen(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                 )
 
-                // Animated Mode Content
                 AnimatedContent(
                     targetState = currentMode,
                     transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(140)) },
@@ -394,9 +420,7 @@ fun AttachContentDialogScreen(
                         AttachDialogMode.MENU -> {
                             AttachMenuOptions(
                                 onScreenshotClick = {
-                                    // Close dialog first so it doesn't appear in the captured image
                                     onDismiss()
-                                    // Trigger instant capture
                                     val fastService = FastScreenCaptureAccessibilityService.instance
                                     if (fastService != null) {
                                         fastService.captureNow()
@@ -417,7 +441,11 @@ fun AttachContentDialogScreen(
                                     try {
                                         filePickerLauncher.launch("*/*")
                                     } catch (e: Exception) {
-                                        Toast.makeText(context, "שגיאה בפתיחת בורר הקבצים", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            AppStrings.tr("שגיאה בפתיחת בורר הקבצים", "Error opening file picker"),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                 }
                             )
@@ -440,7 +468,11 @@ fun AttachContentDialogScreen(
                                         query = prompt,
                                         attachmentUri = audioUri
                                     )
-                                    Toast.makeText(context, "ההקלטה נשלחה ל-NotifAI 🎙️", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("ההקלטה נשלחה ל-NotifAI 🎙️", "Recording sent to NotifAI 🎙️"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                     onDismiss()
                                 },
                                 onCancel = {
@@ -457,7 +489,11 @@ fun AttachContentDialogScreen(
                                             context = context,
                                             query = text
                                         )
-                                        Toast.makeText(context, "השאלה נשלחה ל-NotifAI! 🚀", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            AppStrings.tr("השאלה נשלחה מיד ל-NotifAI! 🚀", "Question sent immediately to NotifAI! 🚀"),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                         onDismiss()
                                     }
                                 },
@@ -478,7 +514,11 @@ fun AttachContentDialogScreen(
                                         query = prompt,
                                         attachmentUri = uri
                                     )
-                                    Toast.makeText(context, "הקובץ נשלח ל-NotifAI! 📎", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("הקובץ נשלח ל-NotifAI! 📎", "File sent to NotifAI! 📎"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                     onDismiss()
                                 },
                                 onChangeFile = {
@@ -509,44 +549,40 @@ private fun AttachMenuOptions(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 1. צילום מסך
         AttachOptionCard(
-            title = "📸 צילום מסך",
-            subtitle = "צלם את מה שמוצג כעת במסך ונתח עם AI",
-            badgeText = "מיידי",
+            title = AppStrings.tr("📸 צילום מסך", "📸 Screenshot"),
+            subtitle = AppStrings.tr("צלם את מה שמוצג כעת במסך ונתח עם AI", "Capture what's on screen now and analyze with AI"),
+            badgeText = AppStrings.tr("מיידי", "Instant"),
             icon = Icons.Default.CameraAlt,
             accentColor = Color(0xFF0284C7),
             testTag = "attach_option_screenshot",
             onClick = onScreenshotClick
         )
 
-        // 2. הקלטת קול
         AttachOptionCard(
-            title = "🎙️ הקלטת קול",
-            subtitle = "הקלט שמע ישירות ושלח כקובץ קולי למודל",
-            badgeText = "שמע",
+            title = AppStrings.tr("🎙️ הקלטת קול (מתחיל מיד)", "🎙️ Voice Recording (Starts Immediately)"),
+            subtitle = AppStrings.tr("מתחיל להקליט מיד עם הכניסה ושולח כקובץ קולי למודל", "Starts recording immediately and sends audio to AI"),
+            badgeText = AppStrings.tr("שמע", "Audio"),
             icon = Icons.Default.Mic,
             accentColor = Color(0xFFE11D48),
             testTag = "attach_option_record",
             onClick = onVoiceRecordClick
         )
 
-        // 3. דיבור לטקסט (עברית)
         AttachOptionCard(
-            title = "🗣️ דיבור לטקסט (עברית)",
-            subtitle = "דבר בעברית והפוך לקוד/שאלה טקסטואלית",
-            badgeText = "he-IL",
+            title = AppStrings.tr("🗣️ דיבור לטקסט (שליחה מיידית)", "🗣️ Speech-to-Text (Instant Send)"),
+            subtitle = AppStrings.tr("מאזין מיד ושולח מיד בסיום הדיבור (אלא אם תלחץ לערוך)", "Listens immediately and auto-sends unless you tap to edit"),
+            badgeText = AppStrings.tr("אוטומטי", "Auto"),
             icon = Icons.Default.RecordVoiceOver,
             accentColor = Color(0xFF7C3AED),
             testTag = "attach_option_stt",
             onClick = onSpeechToTextClick
         )
 
-        // 4. העלאת קובץ
         AttachOptionCard(
-            title = "📁 העלאת קובץ",
-            subtitle = "תמונה, מסמך, PDF, קוד או שמע מהמכשיר",
-            badgeText = "מסמכים",
+            title = AppStrings.tr("📁 העלאת קובץ", "📁 Upload File"),
+            subtitle = AppStrings.tr("תמונה, מסמך, PDF, קוד או שמע מהמכשיר", "Image, document, PDF, code, or audio from device"),
+            badgeText = AppStrings.tr("מסמכים", "Files"),
             icon = Icons.Default.AttachFile,
             accentColor = Color(0xFF059669),
             testTag = "attach_option_file",
@@ -555,6 +591,7 @@ private fun AttachMenuOptions(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ActionsPopupSection(
     onCloseNotificationClick: () -> Unit,
@@ -565,6 +602,14 @@ private fun ActionsPopupSection(
     val repository = remember { (context.applicationContext as NotifAiApplication).aiRepository }
     val allKeys by repository.allKeysFlow.collectAsState(initial = emptyList())
     val sortedKeys = remember(allKeys) { allKeys.sortedBy { it.priority } }
+    val isAudioPlayingInNotif by NotificationChatService.isAudioPlayingFlow.collectAsState()
+
+    var preferredOutputType by remember {
+        mutableStateOf(AiRepository.getPreferredOutputType(context))
+    }
+
+    var showPerTaskRoutingSection by remember { mutableStateOf(false) }
+    var taskRoutingRefreshTick by remember { mutableIntStateOf(0) }
 
     var showAddOrEditKeyDialog by remember { mutableStateOf(false) }
     var keyBeingEdited by remember { mutableStateOf<ApiKeyEntity?>(null) }
@@ -575,13 +620,17 @@ private fun ActionsPopupSection(
     var isFetchingQuickModels by remember { mutableStateOf(false) }
     var quickModelSearchQuery by remember { mutableStateOf("") }
 
+    val latestMediaUri = NotificationChatService.latestAttachmentUri
+    val latestMediaMime = NotificationChatService.latestAttachmentMimeType
+    val latestMediaName = NotificationChatService.latestAttachmentName
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // 1. Copy & Share Row
         Text(
-            text = "פעולות על התשובה האחרונה",
+            text = AppStrings.tr("פעולות על התשובה והשיחה", "Response & Conversation Actions"),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary
@@ -589,7 +638,7 @@ private fun ActionsPopupSection(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = {
@@ -598,7 +647,11 @@ private fun ActionsPopupSection(
                             repository.getLatestAssistantResponse()
                         }
                         if (text.isBlank()) {
-                            Toast.makeText(context, "אין עדיין תשובה זמינה להעתקה", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                AppStrings.tr("אין עדיין תשובה זמינה להעתקה", "No response available to copy yet"),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         } else {
                             NotificationChatService.copyText(context, text)
                             onDismissPopup()
@@ -607,16 +660,16 @@ private fun ActionsPopupSection(
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .height(44.dp)
                     .testTag("actions_copy_btn"),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary
                 )
             ) {
-                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("העתק", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(AppStrings.tr("העתק", "Copy"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
 
             FilledTonalButton(
@@ -626,14 +679,21 @@ private fun ActionsPopupSection(
                             repository.getLatestAssistantResponse()
                         }
                         if (text.isBlank()) {
-                            Toast.makeText(context, "אין עדיין תשובה זמינה לשיתוף", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                AppStrings.tr("אין עדיין תשובה זמינה לשיתוף", "No response available to share yet"),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         } else {
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, text)
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
-                            val chooser = Intent.createChooser(shareIntent, "שתף תשובה מ-NotifAI").apply {
+                            val chooser = Intent.createChooser(
+                                shareIntent,
+                                AppStrings.tr("שתף תשובה מ-NotifAI", "Share response from NotifAI")
+                            ).apply {
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             context.startActivity(chooser)
@@ -643,35 +703,442 @@ private fun ActionsPopupSection(
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .height(48.dp)
+                    .height(44.dp)
                     .testTag("actions_share_btn"),
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("שתף", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(AppStrings.tr("שתף", "Share"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
+
+        // Row 2: Clear Display Only ('נקה') vs Start New Chat ('התחל שיחה חדשה') (Tasks #12 & #21)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    NotificationChatService.clearNotificationDisplayOnly(context)
+                    Toast.makeText(
+                        context,
+                        AppStrings.tr(
+                            "תצוגת ההתראה נוקתה (השיחה וההיסטוריה נשמרו) 🧹",
+                            "Notification display cleared (chat history preserved) 🧹"
+                        ),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    onDismissPopup()
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .testTag("actions_clear_display_btn"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(AppStrings.tr("נקה", "Clear"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    scope.launch {
+                        repository.createNewConversation()
+                        NotificationChatService.clearAllResponses(context)
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr(
+                                "התחלת שיחה חדשה ללא היסטוריה קודמת! 🆕",
+                                "Started a new conversation without history! 🆕"
+                            ),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        onDismissPopup()
+                    }
+                },
+                modifier = Modifier
+                    .weight(1.2f)
+                    .height(44.dp)
+                    .testTag("actions_start_new_chat_btn"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(AppStrings.tr("התחל שיחה חדשה", "Start New Chat"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
+
+        // Row 2B: Direct Download of Latest Response as a File + Stop Audio Notification if active (Tasks #8 & #19)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        if (!latestMediaUri.isNullOrBlank()) {
+                            val saved = MediaStorageManager.saveFileToPublicDownloads(
+                                context = context,
+                                pathOrUriStr = latestMediaUri,
+                                mimeType = latestMediaMime,
+                                suggestedFileName = latestMediaName
+                            )
+                            if (saved != null) {
+                                Toast.makeText(
+                                    context,
+                                    AppStrings.tr(
+                                        "הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): $saved 📥",
+                                        "File downloaded to Downloads/NotifAI: $saved 📥"
+                                    ),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        } else {
+                            val text = NotificationChatService.latestFullResponse.ifBlank {
+                                repository.getLatestAssistantResponse()
+                            }
+                            if (text.isBlank()) {
+                                Toast.makeText(
+                                    context,
+                                    AppStrings.tr("אין עדיין תוכן להורדה", "No content available to download yet"),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                val textFile = MediaStorageManager.createDownloadableTextFile(
+                                    context = context,
+                                    content = text,
+                                    prefix = "notifai_response"
+                                )
+                                val saved = if (textFile != null) {
+                                    MediaStorageManager.saveFileToPublicDownloads(
+                                        context = context,
+                                        pathOrUriStr = textFile.first,
+                                        mimeType = textFile.second,
+                                        suggestedFileName = textFile.third
+                                    )
+                                } else null
+                                if (saved != null) {
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr(
+                                            "התשובה נשמרה כקובץ בתיקיית ההורדות: $saved 📥",
+                                            "Response saved to Downloads/NotifAI: $saved 📥"
+                                        ),
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .testTag("actions_download_file_btn"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = AppStrings.tr("הורד תשובה / קובץ למכשיר", "Download Response / File"),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (isAudioPlayingInNotif || latestMediaMime?.startsWith("audio/") == true) {
+                Button(
+                    onClick = {
+                        NotificationChatService.stopAudioPlayback(context)
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr("ניגון השמע והתראת השמע נסגרו ⏹️", "Audio playback & notification closed ⏹️"),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
+                    modifier = Modifier
+                        .height(40.dp)
+                        .testTag("actions_stop_audio_notif_btn"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = AppStrings.tr("סגור התראת שמע", "Close Audio Notif"),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Latest Media Preview / Play / Download / Stop Audio Notification (Tasks #7, #8, #19)
+        if (!latestMediaUri.isNullOrBlank()) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = AppStrings.tr(
+                            "מדיה / קובץ מהתשובה האחרונה בהתראה (תמונה / וידאו / שמע / קובץ)",
+                            "Media / File from Latest Notification Response"
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    MessageAttachmentView(
+                        attachmentUri = latestMediaUri,
+                        attachmentMimeType = latestMediaMime,
+                        attachmentName = latestMediaName,
+                        isUserBubble = false
+                    )
+
+                    if (latestMediaMime?.startsWith("audio/") == true) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    NotificationChatService.playAudioFromNotification(context, latestMediaUri)
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(AppStrings.tr("נגן שמע בהתראה", "Play in Notification"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    NotificationChatService.stopAudioPlayback(context)
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("ניגון השמע והתראת השמע נסגרו ⏹️", "Audio playback & notification closed ⏹️"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(AppStrings.tr("סגור התראת שמע", "Close Audio Notif"), fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
 
         HorizontalDivider(
-            modifier = Modifier.padding(vertical = 4.dp),
+            modifier = Modifier.padding(vertical = 2.dp),
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
 
-        // 2. Direct Model Selection & Key Editing
+        // 2. Output Type Selector (Task #16: ברירת מחדל = טקסט, או תמונה, סאונד, וידאו, קובץ)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = AppStrings.tr(
+                    "סוג פלט מבוקש למענה הבא (ברירת מחדל: טקסט)",
+                    "Requested Output Type for Next Reply (Default: Text)"
+                ),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = AppStrings.tr(
+                    "בחר איזה סוג תוצר תרצה לקבל מה-AI בשאלה הבאה מתוך ההתראה:",
+                    "Select what type of output you want from AI on your next prompt:"
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            val outputOptions = listOf(
+                AiTaskType.TEXT to AppStrings.tr("📝 טקסט (ברירת מחדל)", "📝 Text (Default)"),
+                AiTaskType.IMAGE_GEN to AppStrings.tr("🎨 תמונה", "🎨 Image"),
+                AiTaskType.AUDIO_GEN to AppStrings.tr("🔊 סאונד / שמע", "🔊 Sound / Audio"),
+                AiTaskType.VIDEO_GEN to AppStrings.tr("🎬 וידאו", "🎬 Video"),
+                AiTaskType.FILE_INPUT to AppStrings.tr("📎 קובץ", "📎 File")
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                outputOptions.forEach { (taskType, label) ->
+                    val selected = preferredOutputType == taskType
+                    FilterChip(
+                        selected = selected,
+                        onClick = {
+                            preferredOutputType = taskType
+                            AiRepository.setPreferredOutputType(context, taskType)
+                            NotificationChatService.startService(context)
+                            Toast.makeText(
+                                context,
+                                AppStrings.tr("סוג הפלט המבוקש הוגדר ל: $label", "Output type set to: $label"),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        },
+                        label = {
+                            Text(
+                                text = label,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        modifier = Modifier.testTag("output_type_chip_${taskType.name}")
+                    )
+                }
+            }
+        }
+
+        // Per-Task Dedicated Key & Model Routing directly inside 'פעולות' (Task #2)
+        if (sortedKeys.isNotEmpty()) {
+            OutlinedButton(
+                onClick = { showPerTaskRoutingSection = !showPerTaskRoutingSection },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (showPerTaskRoutingSection) {
+                        AppStrings.tr("הסתר ניתוב מפתח ומודל לפי סוג בקשה", "Hide Per-Task Key & Model Routing")
+                    } else {
+                        AppStrings.tr("הגדר מפתח ומודל שונה לכל סוג בקשה (טקסט, תמונה, סאונד, וידאו, קובץ)", "Set Separate Key & Model per Request Type")
+                    },
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            AnimatedVisibility(visible = showPerTaskRoutingSection) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val currentTick = taskRoutingRefreshTick
+                        AiTaskType.entries.forEach { taskType ->
+                            var menuExpanded by remember { mutableStateOf(false) }
+                            val assignedKeyId = remember(currentTick, allKeys) {
+                                AiRepository.getDedicatedKeyIdForTask(context, taskType)
+                            }
+                            val assignedKey = sortedKeys.find { it.id == assignedKeyId }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${taskType.emoji} ${AppStrings.tr(taskType.titleHe, taskType.name)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(0.45f)
+                                )
+                                Box(modifier = Modifier.weight(0.55f)) {
+                                    OutlinedButton(
+                                        onClick = { menuExpanded = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(10.dp),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = if (assignedKey != null) {
+                                                "${assignedKey.name} (${assignedKey.selectedModel.substringAfterLast("/")})"
+                                            } else {
+                                                AppStrings.tr("אוטומטי (לפי עדיפות)", "Auto (By Priority)")
+                                            },
+                                            fontSize = 10.sp,
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    }
+                                    DropdownMenu(
+                                        expanded = menuExpanded,
+                                        onDismissRequest = { menuExpanded = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(AppStrings.tr("אוטומטי (לפי סדר עדיפויות)", "Auto (By Priority Order)")) },
+                                            onClick = {
+                                                AiRepository.setDedicatedKeyIdForTask(context, taskType, null)
+                                                taskRoutingRefreshTick++
+                                                menuExpanded = false
+                                            }
+                                        )
+                                        sortedKeys.forEach { k ->
+                                            DropdownMenuItem(
+                                                text = { Text("${k.name} • ${k.selectedModel}") },
+                                                onClick = {
+                                                    AiRepository.setDedicatedKeyIdForTask(context, taskType, k.id)
+                                                    scope.launch {
+                                                        val updatedTasks = k.parsedSupportedTasks + taskType
+                                                        repository.updateKeyEntity(
+                                                            k.copy(supportedTasks = AiTaskType.toCsv(updatedTasks), isEnabled = true)
+                                                        )
+                                                    }
+                                                    taskRoutingRefreshTick++
+                                                    menuExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 2.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+
+        // 3. Direct Model Selection, Key Toggle ON/OFF, Duplicate & Edit (Tasks #1, #3, #6)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "בחירת מודל ועריכת מפתחות",
+                    text = AppStrings.tr("כיבוי/הדלקה של מפתחות ובחירת מודל", "Toggle Keys ON/OFF & Select Model"),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "החלף מודל פעיל או ערוך הגדרות ישירות מכאן",
+                    text = AppStrings.tr(
+                        "הדלק/כבה מפתחות, שכפל מפתח או החלף מודל ישירות מכאן",
+                        "Toggle keys ON/OFF, duplicate a key, or switch models directly here"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -690,7 +1157,7 @@ private fun ActionsPopupSection(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("הוסף מפתח", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(AppStrings.tr("הוסף מפתח", "Add Key"), fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -710,7 +1177,7 @@ private fun ActionsPopupSection(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "לא הוגדרו מפתחות API עדיין",
+                        text = AppStrings.tr("לא הוגדרו מפתחות API עדיין", "No API keys configured yet"),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -723,17 +1190,18 @@ private fun ActionsPopupSection(
                     ) {
                         Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("הוסף מפתח ובחר מודל")
+                        Text(AppStrings.tr("הוסף מפתח ובחר מודל", "Add Key & Select Model"))
                     }
                 }
             }
         } else {
+            val firstEnabledId = sortedKeys.firstOrNull { it.isEnabled }?.id
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                sortedKeys.forEachIndexed { index, keyEntity ->
-                    val isPrimary = index == 0 && keyEntity.isEnabled
+                sortedKeys.forEach { keyEntity ->
+                    val isPrimary = keyEntity.id == firstEnabledId && keyEntity.isEnabled
                     Card(
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
@@ -771,7 +1239,7 @@ private fun ActionsPopupSection(
                                         shape = RoundedCornerShape(8.dp)
                                     ) {
                                         Text(
-                                            text = if (isPrimary) "פעיל #1" else "#${keyEntity.priority}",
+                                            text = if (isPrimary) AppStrings.tr("פעיל #1", "Active #1") else "#${keyEntity.priority}",
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isPrimary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -786,61 +1254,64 @@ private fun ActionsPopupSection(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = keyEntity.provider.displayName,
+                                            text = "${keyEntity.provider.displayName} • ${keyEntity.parsedSupportedTasks.joinToString(", ") { it.emoji }}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
 
+                                // Task #1: Switch to turn keys ON / OFF directly from 'פעולות'
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    if (!isPrimary) {
-                                        FilledTonalButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    repository.setKeyAsPrimary(keyEntity.id)
+                                    Switch(
+                                        checked = keyEntity.isEnabled,
+                                        onCheckedChange = { checked ->
+                                            scope.launch {
+                                                repository.updateKeyEntity(keyEntity.copy(isEnabled = checked))
+                                                val msg = if (checked) {
+                                                    AppStrings.tr("המפתח '${keyEntity.name}' הופעל ✅", "Key '${keyEntity.name}' enabled ✅")
+                                                } else {
+                                                    AppStrings.tr("המפתח '${keyEntity.name}' כובה ⏸️", "Key '${keyEntity.name}' disabled ⏸️")
+                                                }
+                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("actions_key_switch_${keyEntity.id}"),
+                                        colors = SwitchDefaults.colors(
+                                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                                            checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+
+                                    IconButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val copy = repository.duplicateKey(keyEntity.id)
+                                                if (copy != null) {
                                                     Toast.makeText(
                                                         context,
-                                                        "הוחלף למודל ראשי: ${keyEntity.selectedModel} ⚡",
+                                                        AppStrings.tr(
+                                                            "שוכפל כ-'${copy.name}' עם מודל ${copy.selectedModel}",
+                                                            "Duplicated as '${copy.name}' with model ${copy.selectedModel}"
+                                                        ),
                                                         Toast.LENGTH_SHORT
                                                     ).show()
                                                 }
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier
-                                                .height(32.dp)
-                                                .testTag("set_primary_key_btn_${keyEntity.id}"),
-                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                                        ) {
-                                            Text("בחר כפעיל", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    } else {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier
-                                                .background(
-                                                    MaterialTheme.colorScheme.secondaryContainer,
-                                                    RoundedCornerShape(10.dp)
-                                                )
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.CheckCircle,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.secondary,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "ראשי",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                                            )
-                                        }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("actions_duplicate_key_btn_${keyEntity.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ContentCopy,
+                                            contentDescription = AppStrings.tr("שכפל מפתח", "Duplicate key"),
+                                            tint = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
                                     }
 
                                     IconButton(
@@ -854,7 +1325,7 @@ private fun ActionsPopupSection(
                                     ) {
                                         Icon(
                                             Icons.Default.Edit,
-                                            contentDescription = "ערוך מפתח ומודל",
+                                            contentDescription = AppStrings.tr("ערוך מפתח ומודל", "Edit key & model"),
                                             tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(18.dp)
                                         )
@@ -862,64 +1333,90 @@ private fun ActionsPopupSection(
                                 }
                             }
 
-                            // Clickable Model Selector Bar
-                            OutlinedButton(
-                                onClick = {
-                                    keyForQuickModelSelect = keyEntity
-                                    quickModelSearchQuery = ""
-                                    quickModelsList = keyEntity.provider.suggestedModels.map {
-                                        AiModelInfo(it, it, isRecommended = true)
-                                    }
-                                    isFetchingQuickModels = true
-                                    scope.launch {
-                                        val res = repository.fetchModelsForKeyId(keyEntity.id)
-                                        if (res.models.isNotEmpty()) {
-                                            quickModelsList = res.models
-                                        }
-                                        isFetchingQuickModels = false
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("quick_model_picker_btn_${keyEntity.id}"),
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            // Clickable Model Selector + Set as Primary Row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                OutlinedButton(
+                                    onClick = {
+                                        keyForQuickModelSelect = keyEntity
+                                        quickModelSearchQuery = ""
+                                        quickModelsList = AiModelInfo.sortBestFirst(
+                                            keyEntity.provider.suggestedModels.map {
+                                                AiModelInfo(it, it, isRecommended = true)
+                                            }
+                                        )
+                                        isFetchingQuickModels = true
+                                        scope.launch {
+                                            val res = repository.fetchModelsForKeyId(keyEntity.id)
+                                            if (res.models.isNotEmpty()) {
+                                                quickModelsList = AiModelInfo.sortBestFirst(res.models)
+                                            }
+                                            isFetchingQuickModels = false
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("quick_model_picker_btn_${keyEntity.id}"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                 ) {
                                     Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            Icons.Default.Psychology,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "מודל: ${keyEntity.selectedModel}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = "החלף מודל",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Psychology,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = keyEntity.selectedModel,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1
+                                            )
+                                        }
                                         Icon(
                                             Icons.Default.ArrowDropDown,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.primary
                                         )
+                                    }
+                                }
+
+                                if (!isPrimary) {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                repository.setKeyAsPrimary(keyEntity.id)
+                                                Toast.makeText(
+                                                    context,
+                                                    AppStrings.tr(
+                                                        "הוגדר כראשי (#1): ${keyEntity.selectedModel} ⚡",
+                                                        "Set as Primary (#1): ${keyEntity.selectedModel} ⚡"
+                                                    ),
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier
+                                            .height(36.dp)
+                                            .testTag("set_primary_key_btn_${keyEntity.id}"),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(AppStrings.tr("קבע כראשי", "Set Primary"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -934,11 +1431,11 @@ private fun ActionsPopupSection(
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
 
-        // 3. Close Notification Button (Moved from 'שלח תוכן')
+        // 4. Close Notification Button
         AttachOptionCard(
-            title = "🛑 סגור התראה",
-            subtitle = "הסר את התראת NotifAI מווילון ההתראות",
-            badgeText = "הסרה",
+            title = AppStrings.tr("🛑 סגור התראה", "🛑 Close Notification"),
+            subtitle = AppStrings.tr("הסר את התראת NotifAI מווילון ההתראות", "Remove NotifAI notification from the notification shade"),
+            badgeText = AppStrings.tr("הסרה", "Remove"),
             icon = Icons.Default.Close,
             accentColor = Color(0xFFDC2626),
             testTag = "actions_close_notification_btn",
@@ -946,18 +1443,33 @@ private fun ActionsPopupSection(
         )
     }
 
-    // Quick Model Picker Modal for a selected key
+    // Quick Model Picker + Fallback Toggle + Task Type Modal for a selected key (Tasks #3, #4, #5, #6)
     val targetKey = keyForQuickModelSelect
     if (targetKey != null) {
+        var selectedPrimaryModel by remember(targetKey.id) { mutableStateOf(targetKey.selectedModel) }
+        var enabledFallbacks by remember(targetKey.id) {
+            val initList = targetKey.fallbackModels
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it != targetKey.selectedModel }
+            mutableStateOf(initList)
+        }
+        var selectedKeyTasks by remember(targetKey.id) {
+            mutableStateOf(targetKey.parsedSupportedTasks)
+        }
+
         val filteredModels = remember(quickModelsList, quickModelSearchQuery) {
-            if (quickModelSearchQuery.isBlank()) {
-                quickModelsList
-            } else {
-                quickModelsList.filter {
-                    it.id.contains(quickModelSearchQuery, ignoreCase = true) ||
-                        it.displayName.contains(quickModelSearchQuery, ignoreCase = true)
+            AiModelInfo.sortBestFirst(
+                if (quickModelSearchQuery.isBlank()) {
+                    quickModelsList
+                } else {
+                    quickModelsList.filter {
+                        it.id.contains(quickModelSearchQuery, ignoreCase = true) ||
+                            it.displayName.contains(quickModelSearchQuery, ignoreCase = true) ||
+                            it.roleBadge.contains(quickModelSearchQuery, ignoreCase = true)
+                    }
                 }
-            }
+            )
         }
 
         AlertDialog(
@@ -973,14 +1485,17 @@ private fun ActionsPopupSection(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "בחירת מודל • ${targetKey.name}",
+                            text = AppStrings.tr("בחירת מודלים וסוגי משימות • ${targetKey.name}", "Select Models & Tasks • ${targetKey.name}"),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "ספק: ${targetKey.provider.displayName}",
+                            text = AppStrings.tr(
+                                "ספק: ${targetKey.provider.displayName} (המודלים הטובים ביותר בראש הרשימה ⭐)",
+                                "Provider: ${targetKey.provider.displayName} (Best models sorted first ⭐)"
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -995,31 +1510,100 @@ private fun ActionsPopupSection(
             },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Direct API Key Webpage Link (Task #4)
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(targetKey.provider.apiKeysWebUrl)).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(browserIntent)
+                            } catch (_: Exception) {}
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = AppStrings.tr(
+                                "🔗 עמוד מפתחות ה-API של ${targetKey.provider.displayName.substringBefore(" ")}",
+                                "🔗 ${targetKey.provider.displayName.substringBefore(" ")} API Keys Page"
+                            ),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Task Types for this Model/Key (Task #6)
+                    Text(
+                        text = AppStrings.tr("סוגי בקשות שמודל זה מטפל בהם:", "Task types handled by this model:"),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AiTaskType.entries.forEach { task ->
+                            val isSel = task in selectedKeyTasks
+                            FilterChip(
+                                selected = isSel,
+                                onClick = {
+                                    selectedKeyTasks = if (isSel && selectedKeyTasks.size > 1) {
+                                        selectedKeyTasks - task
+                                    } else {
+                                        selectedKeyTasks + task
+                                    }
+                                },
+                                label = {
+                                    Text("${task.emoji} ${AppStrings.tr(task.shortBadgeHe, task.name)}", fontSize = 10.sp)
+                                },
+                                leadingIcon = if (isSel) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(12.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+
                     OutlinedTextField(
                         value = quickModelSearchQuery,
                         onValueChange = { quickModelSearchQuery = it },
-                        label = { Text("חפש מודל או הקלד מזהה מודל...") },
+                        label = { Text(AppStrings.tr("חפש מודל או הקלד מזהה מודל...", "Search model or type model ID...")) },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         singleLine = true
                     )
 
+                    Text(
+                        text = AppStrings.tr(
+                            "לחץ על מודל לקביעתו כראשי, או הדלק מתג כדי להפעילו כמודל גיבוי (ברירת מחדל: כבוי):",
+                            "Tap a model to set as Primary, or toggle switch ON to enable as Fallback (default: OFF):"
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(280.dp)
+                            .height(240.dp)
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         filteredModels.forEach { modelInfo ->
-                            val isSelected = modelInfo.id == targetKey.selectedModel
+                            val isPrimarySelected = modelInfo.id == selectedPrimaryModel
+                            val isFallbackEnabled = modelInfo.id in enabledFallbacks
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = if (isSelected) {
+                                color = if (isPrimarySelected) {
                                     MaterialTheme.colorScheme.primaryContainer
                                 } else {
                                     MaterialTheme.colorScheme.surfaceContainerHigh
@@ -1027,51 +1611,76 @@ private fun ActionsPopupSection(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        scope.launch {
-                                            repository.updateKeyEntity(
-                                                targetKey.copy(
-                                                    selectedModel = modelInfo.id,
-                                                    isEnabled = true
-                                                )
-                                            )
-                                            repository.setKeyAsPrimary(targetKey.id)
-                                            Toast.makeText(
-                                                context,
-                                                "המודל עודכן ל-${modelInfo.id} והוגדר כפעיל! 🤖",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                            keyForQuickModelSelect = null
-                                        }
+                                        selectedPrimaryModel = modelInfo.id
+                                        enabledFallbacks = enabledFallbacks.filter { it != modelInfo.id }
+                                        selectedKeyTasks = selectedKeyTasks + modelInfo.capabilities
                                     }
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = modelInfo.displayName,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        if (modelInfo.displayName != modelInfo.id) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
                                             Text(
-                                                text = modelInfo.id,
+                                                text = modelInfo.displayName,
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Surface(
+                                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = modelInfo.roleBadge,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    fontSize = 9.sp
+                                                )
+                                            }
+                                        }
+                                        if (isPrimarySelected) {
+                                            Text(
+                                                text = AppStrings.tr("⭐ מודל ראשי במפתח זה", "⭐ Primary model for this key"),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        } else if (isFallbackEnabled) {
+                                            val orderIdx = enabledFallbacks.indexOf(modelInfo.id) + 2
+                                            Text(
+                                                text = AppStrings.tr("גיבוי פעיל #$orderIdx", "Active Fallback #$orderIdx"),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.secondary,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
-                                    if (isSelected) {
+
+                                    if (isPrimarySelected) {
                                         Icon(
                                             Icons.Default.CheckCircle,
-                                            contentDescription = "נבחר",
+                                            contentDescription = AppStrings.tr("ראשי", "Primary"),
                                             tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    } else {
+                                        Switch(
+                                            checked = isFallbackEnabled,
+                                            onCheckedChange = { checked ->
+                                                enabledFallbacks = if (checked) {
+                                                    enabledFallbacks + modelInfo.id
+                                                } else {
+                                                    enabledFallbacks.filter { it != modelInfo.id }
+                                                }
+                                            }
                                         )
                                     }
                                 }
@@ -1081,41 +1690,57 @@ private fun ActionsPopupSection(
                         if (quickModelSearchQuery.isNotBlank() && filteredModels.none { it.id.equals(quickModelSearchQuery.trim(), ignoreCase = true) }) {
                             OutlinedButton(
                                 onClick = {
-                                    val customModel = quickModelSearchQuery.trim()
-                                    scope.launch {
-                                        repository.updateKeyEntity(
-                                            targetKey.copy(
-                                                selectedModel = customModel,
-                                                isEnabled = true
-                                            )
-                                        )
-                                        repository.setKeyAsPrimary(targetKey.id)
-                                        Toast.makeText(
-                                            context,
-                                            "המודל המותאם '$customModel' נשמר והופעל! 🤖",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-                                        keyForQuickModelSelect = null
-                                    }
+                                    selectedPrimaryModel = quickModelSearchQuery.trim()
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("השתמש במודל מותאם אישית: \"${quickModelSearchQuery.trim()}\"")
+                                Text(
+                                    AppStrings.tr(
+                                        "השתמש במודל מותאם אישית: \"${quickModelSearchQuery.trim()}\"",
+                                        "Use custom model: \"${quickModelSearchQuery.trim()}\""
+                                    )
+                                )
                             }
                         }
                     }
                 }
             },
             confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            repository.updateKeyEntity(
+                                targetKey.copy(
+                                    selectedModel = selectedPrimaryModel,
+                                    fallbackModels = enabledFallbacks.filter { it != selectedPrimaryModel }.joinToString(","),
+                                    supportedTasks = AiTaskType.toCsv(selectedKeyTasks),
+                                    isEnabled = true
+                                )
+                            )
+                            Toast.makeText(
+                                context,
+                                AppStrings.tr(
+                                    "המודל $selectedPrimaryModel והגדרות הגיבוי נשמרו! 🤖",
+                                    "Model $selectedPrimaryModel & fallback settings saved! 🤖"
+                                ),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            keyForQuickModelSelect = null
+                        }
+                    }
+                ) {
+                    Text(AppStrings.tr("שמור הגדרות מודל", "Save Model Settings"), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
                 TextButton(onClick = { keyForQuickModelSelect = null }) {
-                    Text("סגור")
+                    Text(AppStrings.tr("ביטול", "Cancel"))
                 }
             }
         )
     }
 
-    // Full Add / Edit Key & Playground Dialog inside the Actions popup
     if (showAddOrEditKeyDialog) {
         AddKeyDialog(
             existingKey = keyBeingEdited,
@@ -1130,7 +1755,7 @@ private fun ActionsPopupSection(
                 showAddOrEditKeyDialog = false
                 keyBeingEdited = null
             },
-            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt ->
+            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol ->
                 scope.launch {
                     repository.saveApiKey(
                         id = keyBeingEdited?.id,
@@ -1141,11 +1766,19 @@ private fun ActionsPopupSection(
                         priority = priority,
                         temperature = temperature,
                         maxTokens = maxTokens,
-                        systemPrompt = systemPrompt
+                        systemPrompt = systemPrompt,
+                        supportedTasks = supportedTasks,
+                        fallbackModels = fallbackModels,
+                        customBaseUrl = customBaseUrl,
+                        customProtocol = customProtocol
                     )
                     showAddOrEditKeyDialog = false
                     keyBeingEdited = null
-                    Toast.makeText(context, "המפתח והמודל נשמרו בהצלחה! 🔐", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        AppStrings.tr("המפתח והמודל נשמרו בהצלחה! 🔐", "Key & model saved successfully! 🔐"),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         )
@@ -1235,7 +1868,7 @@ private fun AttachOptionCard(
 }
 
 // ==========================================
-// 1. INLINE VOICE RECORDER
+// 1. INLINE VOICE RECORDER (Task #11 & #22: Starts Immediately + Permission Explanation)
 // ==========================================
 @Composable
 private fun VoiceRecordSection(
@@ -1243,7 +1876,6 @@ private fun VoiceRecordSection(
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var hasPermission by remember {
         mutableStateOf(
@@ -1259,7 +1891,11 @@ private fun VoiceRecordSection(
     ) { isGranted ->
         hasPermission = isGranted
         if (!isGranted) {
-            Toast.makeText(context, "נדרשת הרשאת מיקרופון להקלטה", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                AppStrings.tr("נדרשת הרשאת מיקרופון להקלטת קול", "Microphone permission is required for voice recording"),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -1270,7 +1906,45 @@ private fun VoiceRecordSection(
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var audioLevel by remember { mutableFloatStateOf(0.1f) }
 
-    // Pulsing transition animation for recording
+    val startRecordingNow = {
+        if (!isRecording) {
+            try {
+                val outFile = File(
+                    context.cacheDir,
+                    "notifai_rec_${System.currentTimeMillis()}.m4a"
+                )
+                val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    MediaRecorder(context)
+                } else {
+                    @Suppress("DEPRECATION")
+                    MediaRecorder()
+                }
+                rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+                rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                rec.setOutputFile(outFile.absolutePath)
+                rec.prepare()
+                rec.start()
+                recorder = rec
+                currentOutputFile = outFile
+                isRecording = true
+            } catch (e: Exception) {
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("שגיאה בהפעלת המיקרופון: ${e.message}", "Error starting microphone: ${e.message}"),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    // Task #11: Start recording IMMEDIATELY as soon as permission is granted!
+    LaunchedEffect(hasPermission) {
+        if (hasPermission && !isRecording && currentOutputFile == null) {
+            startRecordingNow()
+        }
+    }
+
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -1282,7 +1956,6 @@ private fun VoiceRecordSection(
         label = "mic_scale"
     )
 
-    // Clean up recorder on dispose
     DisposableEffect(Unit) {
         onDispose {
             try {
@@ -1292,7 +1965,6 @@ private fun VoiceRecordSection(
         }
     }
 
-    // Timer & amplitude loop
     LaunchedEffect(isRecording) {
         if (isRecording) {
             secondsElapsed = 0
@@ -1313,23 +1985,55 @@ private fun VoiceRecordSection(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         if (!hasPermission) {
-            Text(
-                text = "נדרשת הרשאת מיקרופון להקלטת הודעה קולית",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Button(
-                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                shape = RoundedCornerShape(12.dp)
+            // Task #22: Clear explanation before requesting permission
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(imageVector = Icons.Default.Mic, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("הענק הרשאת מיקרופון")
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = AppStrings.tr("למה נדרשת הרשאת מיקרופון?", "Why is Microphone Permission Needed?"),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = AppStrings.tr(
+                            "NotifAI זקוקה לגישה למיקרופון אך ורק כשאתה בוחר להקליט הודעה קולית או להשתמש בדיבור לטקסט, כדי להעביר את דבריך למודל ה-AI. ההקלטה תתחיל מיד לאחר האישור.",
+                            "NotifAI needs microphone access only when you record a voice message or use Speech-to-Text. Recording will start immediately after approval."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.Mic, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            AppStrings.tr("הבנתי, אשר מיקרופון והתחל להקליט מיד", "Approve Microphone & Record Immediately"),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         } else {
-            // Animated Visual Mic Circle
             Box(
                 modifier = Modifier
                     .size(100.dp)
@@ -1351,32 +2055,8 @@ private fun VoiceRecordSection(
                         )
                         .clickable {
                             if (!isRecording) {
-                                // Start recording
-                                try {
-                                    val outFile = File(
-                                        context.cacheDir,
-                                        "notifai_rec_${System.currentTimeMillis()}.m4a"
-                                    )
-                                    val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                        MediaRecorder(context)
-                                    } else {
-                                        @Suppress("DEPRECATION")
-                                        MediaRecorder()
-                                    }
-                                    rec.setAudioSource(MediaRecorder.AudioSource.MIC)
-                                    rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                                    rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                                    rec.setOutputFile(outFile.absolutePath)
-                                    rec.prepare()
-                                    rec.start()
-                                    recorder = rec
-                                    currentOutputFile = outFile
-                                    isRecording = true
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "שגיאה בהפעלת המיקרופון: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
+                                startRecordingNow()
                             } else {
-                                // Stop and prepare
                                 try {
                                     recorder?.stop()
                                 } catch (_: Exception) {}
@@ -1389,37 +2069,45 @@ private fun VoiceRecordSection(
                 ) {
                     Icon(
                         imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
-                        contentDescription = if (isRecording) "עצור הקלטה" else "התחל הקלטה",
+                        contentDescription = if (isRecording) AppStrings.tr("עצור הקלטה", "Stop recording") else AppStrings.tr("התחל הקלטה", "Start recording"),
                         tint = Color.White,
                         modifier = Modifier.size(34.dp)
                     )
                 }
             }
 
-            // Duration & State
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 val mins = (secondsElapsed / 3) / 60
                 val secs = (secondsElapsed / 3) % 60
                 val timeFormatted = String.format(Locale.US, "%02d:%02d", mins, secs)
 
                 Text(
-                    text = if (isRecording) timeFormatted else if (currentOutputFile != null) "הקלטה הושלמה ($timeFormatted)" else "לחץ על המיקרופון כדי להקליט",
+                    text = if (isRecording) {
+                        AppStrings.tr("🔴 מקליט כעת ($timeFormatted)", "🔴 Recording now ($timeFormatted)")
+                    } else if (currentOutputFile != null) {
+                        AppStrings.tr("הקלטה הושלמה ($timeFormatted)", "Recording complete ($timeFormatted)")
+                    } else {
+                        AppStrings.tr("מתחיל הקלטה...", "Starting recording...")
+                    },
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                     color = if (isRecording) Color(0xFFE11D48) else MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = if (isRecording) "מקליט כעת… לחץ שוב לסיום" else if (currentOutputFile != null) "ההקלטה מוכנה לשליחה" else "איכות שמע גבוהה AAC",
+                    text = if (isRecording) {
+                        AppStrings.tr("ההקלטה החלה מיד! לחץ על 'שלח ל-AI' לסיום ושליחה מיידית", "Recording started immediately! Tap 'Send to AI' to finish & send")
+                    } else {
+                        AppStrings.tr("ההקלטה מוכנה לשליחה", "Recording ready to send")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
-            // Optional Prompt Field
             OutlinedTextField(
                 value = currentPrompt,
                 onValueChange = { currentPrompt = it },
-                label = { Text("הנחיה או שאלה על ההקלטה (אופציונלי)") },
-                placeholder = { Text("למשל: תסכם את מה שאמרתי, או ענה על השאלה") },
+                label = { Text(AppStrings.tr("הנחיה או שאלה על ההקלטה (אופציונלי)", "Prompt or question about recording (optional)")) },
+                placeholder = { Text(AppStrings.tr("למשל: תסכם את מה שאמרתי, או ענה על השאלה", "e.g., Summarize what I said, or answer my question")) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("voice_prompt_input"),
@@ -1427,7 +2115,6 @@ private fun VoiceRecordSection(
                 maxLines = 2
             )
 
-            // Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1445,7 +2132,7 @@ private fun VoiceRecordSection(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("ביטול")
+                    Text(AppStrings.tr("ביטול", "Cancel"))
                 }
 
                 Button(
@@ -1462,7 +2149,11 @@ private fun VoiceRecordSection(
                         if (file != null && file.exists()) {
                             onSendAudio(Uri.fromFile(file), currentPrompt)
                         } else {
-                            Toast.makeText(context, "טרם הוקלט קול", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                AppStrings.tr("טרם הוקלט קול", "No voice recorded yet"),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     },
                     enabled = isRecording || currentOutputFile != null,
@@ -1474,7 +2165,7 @@ private fun VoiceRecordSection(
                 ) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("שלח ל-AI")
+                    Text(AppStrings.tr("עצור ושלח מיד ל-AI", "Stop & Send to AI"), fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1482,7 +2173,7 @@ private fun VoiceRecordSection(
 }
 
 // ==========================================
-// 2. HEBREW SPEECH-TO-TEXT SECTION
+// 2. SPEECH-TO-TEXT SECTION (Task #10 & #22: Immediate Listen & Immediate Auto-Send unless user clicks to edit)
 // ==========================================
 @Composable
 private fun HebrewSpeechToTextSection(
@@ -1490,6 +2181,8 @@ private fun HebrewSpeechToTextSection(
     onCancel: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var hasPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -1504,16 +2197,65 @@ private fun HebrewSpeechToTextSection(
     ) { isGranted ->
         hasPermission = isGranted
         if (!isGranted) {
-            Toast.makeText(context, "נדרשת הרשאת מיקרופון לדיבור לטקסט", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                AppStrings.tr("נדרשת הרשאת מיקרופון לדיבור לטקסט", "Microphone permission is required for Speech-to-Text"),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
     var recognizedText by remember { mutableStateOf("") }
     var isListening by remember { mutableStateOf(false) }
-    var speechStatusText by remember { mutableStateOf("מוכן להאזנה בעברית") }
+    var isUserEditing by remember { mutableStateOf(false) }
+    var autoSendCountdownActive by remember { mutableStateOf(false) }
+    var speechStatusText by remember {
+        mutableStateOf(
+            AppStrings.tr(
+                "מאזין מיד… דבר עכשיו (יישלח אוטומטית בסיום)",
+                "Listening immediately… Speak now (auto-sends when done)"
+            )
+        )
+    }
     var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
 
-    // Fallback system recognizer activity launcher
+    val textFieldInteractionSource = remember { MutableInteractionSource() }
+    LaunchedEffect(textFieldInteractionSource) {
+        textFieldInteractionSource.interactions.collect { interaction ->
+            if (interaction is PressInteraction.Press) {
+                isUserEditing = true
+                autoSendCountdownActive = false
+                speechStatusText = AppStrings.tr(
+                    "מצב עריכה פעיל ✏️ (השליחה האוטומטית בוטלה — לחץ 'שלח' כשתסיים)",
+                    "Edit mode active ✏️ (Auto-send cancelled — tap 'Send' when ready)"
+                )
+            }
+        }
+    }
+
+    val triggerResultAndAutoSend = { newText: String ->
+        val combined = if (recognizedText.isBlank()) newText else "$recognizedText $newText"
+        recognizedText = combined
+        if (!isUserEditing && combined.isNotBlank()) {
+            autoSendCountdownActive = true
+            speechStatusText = AppStrings.tr(
+                "נקלט! שולח אוטומטית כעת… (לחץ על הטקסט לעריכה)",
+                "Captured! Sending automatically now… (tap text to edit)"
+            )
+            scope.launch {
+                delay(550)
+                if (!isUserEditing && autoSendCountdownActive && recognizedText.isNotBlank()) {
+                    onSendText(recognizedText.trim())
+                }
+            }
+        } else {
+            speechStatusText = AppStrings.tr(
+                "נקלט! ערוך את הטקסט ולחץ 'שלח שאלה'.",
+                "Captured! Edit the text and tap 'Send Question'."
+            )
+        }
+    }
+
     val systemSpeechLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -1521,13 +2263,15 @@ private fun HebrewSpeechToTextSection(
             val results = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             val topResult = results?.firstOrNull()
             if (!topResult.isNullOrBlank()) {
-                recognizedText = if (recognizedText.isBlank()) topResult else "$recognizedText $topResult"
-                speechStatusText = "הקליטה נקלטה בהצלחה!"
+                triggerResultAndAutoSend(topResult)
             }
         }
     }
 
-    // Function to launch speech listening
+    val deviceLangTag = remember {
+        Locale.getDefault().toLanguageTag().ifBlank { "he-IL" }
+    }
+
     val startListening = {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             try {
@@ -1535,8 +2279,8 @@ private fun HebrewSpeechToTextSection(
                 val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "he-IL")
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "he-IL")
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, deviceLangTag)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, deviceLangTag)
                     putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
@@ -1546,11 +2290,18 @@ private fun HebrewSpeechToTextSection(
                 recognizer.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         isListening = true
-                        speechStatusText = "מאזין בעברית… דבר עכשיו 🎙️"
+                        speechStatusText = if (isUserEditing) {
+                            AppStrings.tr("מאזין במצב עריכה… 🎙️", "Listening in edit mode… 🎙️")
+                        } else {
+                            AppStrings.tr(
+                                "מאזין… דבר עכשיו (יישלח מיד בסיום הדיבור!) 🚀",
+                                "Listening… Speak now (sends immediately when you finish!) 🚀"
+                            )
+                        }
                     }
 
                     override fun onBeginningOfSpeech() {
-                        speechStatusText = "קולט דיבור… 🗣️"
+                        speechStatusText = AppStrings.tr("קולט דיבור… 🗣️", "Capturing speech… 🗣️")
                     }
 
                     override fun onRmsChanged(rmsdB: Float) {}
@@ -1559,16 +2310,16 @@ private fun HebrewSpeechToTextSection(
 
                     override fun onEndOfSpeech() {
                         isListening = false
-                        speechStatusText = "מעבד את הדברים שנאמרו…"
+                        speechStatusText = AppStrings.tr("מעבד ושולח…", "Processing & sending…")
                     }
 
                     override fun onError(error: Int) {
                         isListening = false
                         speechStatusText = when (error) {
-                            SpeechRecognizer.ERROR_NO_MATCH -> "לא נקלטו מילים ברורות בעברית. נסה שוב."
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "לא נשמע דיבור. לחץ להאזנה נוספת."
-                            SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "שגיאת רשת בשירות הזיהוי הקולי."
-                            else -> "האזנה הסתיימה. לחץ שוב לדבר."
+                            SpeechRecognizer.ERROR_NO_MATCH -> AppStrings.tr("לא נקלטו מילים ברורות. לחץ על המיקרופון לנסות שוב.", "No clear words detected. Tap mic to try again.")
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> AppStrings.tr("לא נשמע דיבור. לחץ להאזנה נוספת.", "No speech heard. Tap to listen again.")
+                            SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> AppStrings.tr("שגיאת רשת בשירות הזיהוי הקולי.", "Network error in speech recognition.")
+                            else -> AppStrings.tr("האזנה הסתיימה. לחץ שוב לדבר.", "Listening ended. Tap again to speak.")
                         }
                     }
 
@@ -1577,8 +2328,7 @@ private fun HebrewSpeechToTextSection(
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val text = matches?.firstOrNull()
                         if (!text.isNullOrBlank()) {
-                            recognizedText = if (recognizedText.isBlank()) text else "$recognizedText $text"
-                            speechStatusText = "נקלט בהצלחה! באפשרותך לערוך או לשלוח."
+                            triggerResultAndAutoSend(text)
                         }
                     }
 
@@ -1586,7 +2336,8 @@ private fun HebrewSpeechToTextSection(
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         val partial = matches?.firstOrNull()
                         if (!partial.isNullOrBlank()) {
-                            speechStatusText = "מקשיב: \"$partial\""
+                            recognizedText = partial
+                            speechStatusText = AppStrings.tr("קולט: \"$partial\"", "Hearing: \"$partial\"")
                         }
                     }
 
@@ -1596,30 +2347,32 @@ private fun HebrewSpeechToTextSection(
                 recognizer.startListening(intent)
                 speechRecognizer = recognizer
             } catch (e: Exception) {
-                // Fallback to system intent
                 val fallbackIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "he-IL")
-                    putExtra(RecognizerIntent.EXTRA_PROMPT, "דבר בעברית ל-NotifAI…")
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, deviceLangTag)
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, AppStrings.tr("דבר עכשיו ל-NotifAI…", "Speak now to NotifAI…"))
                 }
                 systemSpeechLauncher.launch(fallbackIntent)
             }
         } else {
-            // SpeechRecognizer not available directly; use system voice prompt activity
             val fallbackIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "he-IL")
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "דבר בעברית ל-NotifAI…")
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, deviceLangTag)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, AppStrings.tr("דבר עכשיו ל-NotifAI…", "Speak now to NotifAI…"))
             }
             try {
                 systemSpeechLauncher.launch(fallbackIntent)
             } catch (e: Exception) {
-                Toast.makeText(context, "זיהוי קולי אינו נתמך במכשיר זה", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("זיהוי קולי אינו נתמך במכשיר זה", "Speech recognition is not supported on this device"),
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
 
-    // Auto-start listening on view load if permission granted
+    // Task #10: Auto-start listening immediately when opened!
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             startListening()
@@ -1632,7 +2385,6 @@ private fun HebrewSpeechToTextSection(
         }
     }
 
-    // Animation
     val infiniteTransition = rememberInfiniteTransition(label = "stt_pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -1650,26 +2402,58 @@ private fun HebrewSpeechToTextSection(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         if (!hasPermission) {
-            Text(
-                text = "נדרשת הרשאת מיקרופון לדיבור לטקסט",
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Button(
-                onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                shape = RoundedCornerShape(12.dp)
+            // Task #22: Clear explanation before requesting permission
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(imageVector = Icons.Default.Mic, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("הענק הרשאת מיקרופון")
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = AppStrings.tr("למה נדרשת הרשאת מיקרופון?", "Why is Microphone Permission Needed?"),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = AppStrings.tr(
+                            "NotifAI זקוקה לגישה למיקרופון כדי להמיר את הדיבור שלך לטקסט בזמן אמת ולשלוח אותו מיד למענה בהתראה.",
+                            "NotifAI needs microphone access to transcribe your speech in real time and send it immediately for an answer in the notification."
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.Mic, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            AppStrings.tr("הבנתי, אשר מיקרופון והתחל לדבר מיד", "Approve Microphone & Speak Immediately"),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         } else {
-            // Visual Voice Recognition Icon
             Box(
                 modifier = Modifier
-                    .size(90.dp)
+                    .size(86.dp)
                     .clip(CircleShape)
                     .background(
                         if (isListening) Color(0xFF7C3AED).copy(alpha = 0.15f)
@@ -1679,7 +2463,7 @@ private fun HebrewSpeechToTextSection(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(62.dp)
+                        .size(60.dp)
                         .scale(pulseScale)
                         .clip(CircleShape)
                         .background(
@@ -1698,14 +2482,13 @@ private fun HebrewSpeechToTextSection(
                 ) {
                     Icon(
                         imageVector = if (isListening) Icons.Default.GraphicEq else Icons.Default.Mic,
-                        contentDescription = if (isListening) "מאזין" else "התחל לדבר",
+                        contentDescription = if (isListening) AppStrings.tr("מאזין", "Listening") else AppStrings.tr("התחל לדבר", "Start speaking"),
                         tint = Color.White,
                         modifier = Modifier.size(30.dp)
                     )
                 }
             }
 
-            // Status chip
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
@@ -1717,33 +2500,83 @@ private fun HebrewSpeechToTextSection(
             ) {
                 Text(
                     text = speechStatusText,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
                     color = if (isListening) Color(0xFF7C3AED) else MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
 
-            // Editable Transcribed Text Field
+            // Button to switch to manual edit mode (cancels auto-send)
+            if (!isUserEditing) {
+                FilledTonalButton(
+                    onClick = {
+                        isUserEditing = true
+                        autoSendCountdownActive = false
+                        speechStatusText = AppStrings.tr(
+                            "מצב עריכה פעיל ✏️ — ערוך את הטקסט ולחץ 'שלח שאלה'",
+                            "Edit mode active ✏️ — edit text and tap 'Send Question'"
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("stt_enable_edit_mode_btn"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        AppStrings.tr("לחץ כאן לעריכת הטקסט (בטל שליחה אוטומטית)", "Tap here to edit text (cancel auto-send)"),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Editable Transcribed Text Field (tapping or editing sets isUserEditing = true)
             OutlinedTextField(
                 value = recognizedText,
-                onValueChange = { recognizedText = it },
-                label = { Text("טקסט מתומלל בעברית (ניתן לעריכה)") },
-                placeholder = { Text("הדברים שתגיד יופיעו כאן אוטומטית…") },
+                onValueChange = {
+                    isUserEditing = true
+                    autoSendCountdownActive = false
+                    recognizedText = it
+                },
+                interactionSource = textFieldInteractionSource,
+                label = {
+                    Text(
+                        AppStrings.tr(
+                            "טקסט מתומלל (נגיעה בתיבה עוצרת שליחה אוטומטית לעריכה)",
+                            "Transcribed text (touching box pauses auto-send for editing)"
+                        )
+                    )
+                },
+                placeholder = {
+                    Text(
+                        AppStrings.tr(
+                            "הדברים שתגיד יופיעו כאן ויישלחו מיד…",
+                            "Your spoken words will appear here and send immediately…"
+                        )
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(130.dp)
+                    .height(120.dp)
                     .testTag("stt_transcribed_input"),
                 shape = RoundedCornerShape(14.dp),
                 trailingIcon = {
                     if (recognizedText.isNotBlank()) {
-                        IconButton(onClick = { recognizedText = "" }) {
-                            Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "נקה טקסט")
+                        IconButton(
+                            onClick = {
+                                isUserEditing = true
+                                autoSendCountdownActive = false
+                                recognizedText = ""
+                            }
+                        ) {
+                            Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = AppStrings.tr("נקה טקסט", "Clear text"))
                         }
                     }
                 }
             )
 
-            // Actions Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1757,11 +2590,12 @@ private fun HebrewSpeechToTextSection(
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("דבר שוב")
+                    Text(AppStrings.tr("דבר שוב", "Speak Again"))
                 }
 
                 Button(
                     onClick = {
+                        autoSendCountdownActive = false
                         onSendText(recognizedText.trim())
                     },
                     enabled = recognizedText.isNotBlank(),
@@ -1771,7 +2605,7 @@ private fun HebrewSpeechToTextSection(
                 ) {
                     Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("שלח שאלה")
+                    Text(AppStrings.tr("שלח שאלה עכשיו", "Send Question Now"), fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1790,13 +2624,19 @@ private fun FileSelectedSection(
     onChangeFile: () -> Unit,
     onCancel: () -> Unit
 ) {
-    var promptText by remember { mutableStateOf("אנא נתח את הקובץ המצורף והסבר את תוכנו") }
+    var promptText by remember {
+        mutableStateOf(
+            AppStrings.tr(
+                "אנא נתח את הקובץ המצורף והסבר את תוכנו",
+                "Please analyze the attached file and explain its contents"
+            )
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // File Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -1825,12 +2665,16 @@ private fun FileSelectedSection(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = fileName.ifBlank { "קובץ מצורף" },
+                        text = fileName.ifBlank { AppStrings.tr("קובץ מצורף", "Attached File") },
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1
                     )
                     Text(
-                        text = if (fileSizeStr.isNotBlank()) "גודל: $fileSizeStr" else "מוכן לשליחה ל-AI",
+                        text = if (fileSizeStr.isNotBlank()) {
+                            AppStrings.tr("גודל: $fileSizeStr", "Size: $fileSizeStr")
+                        } else {
+                            AppStrings.tr("מוכן לשליחה ל-AI", "Ready to send to AI")
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1841,17 +2685,16 @@ private fun FileSelectedSection(
                     shape = RoundedCornerShape(8.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Text("החלף", fontSize = 12.sp)
+                    Text(AppStrings.tr("החלף", "Change"), fontSize = 12.sp)
                 }
             }
         }
 
-        // Custom Prompt Outlined TextField
         OutlinedTextField(
             value = promptText,
             onValueChange = { promptText = it },
-            label = { Text("הנחיה או שאלה על הקובץ") },
-            placeholder = { Text("למשל: תרגם לעברית, תסכם, תקן שגיאות...") },
+            label = { Text(AppStrings.tr("הנחיה או שאלה על הקובץ", "Prompt or question about the file")) },
+            placeholder = { Text(AppStrings.tr("למשל: תרגם, תסכם, תקן שגיאות...", "e.g., Translate, summarize, fix errors...")) },
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag("file_prompt_input"),
@@ -1859,7 +2702,6 @@ private fun FileSelectedSection(
             maxLines = 3
         )
 
-        // Actions
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1869,7 +2711,7 @@ private fun FileSelectedSection(
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("ביטול")
+                Text(AppStrings.tr("ביטול", "Cancel"))
             }
 
             Button(
@@ -1885,33 +2727,31 @@ private fun FileSelectedSection(
             ) {
                 Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("שלח ל-AI")
+                Text(AppStrings.tr("שלח קובץ ל-AI", "Send File to AI"))
             }
         }
     }
 }
 
 private fun getFileMetadata(context: Context, uri: Uri): Pair<String, String> {
-    var name = "attachment"
-    var sizeStr = ""
+    var name = "attached_file"
+    var sizeBytes = 0L
     try {
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
             if (cursor.moveToFirst()) {
-                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (nameIndex != -1) {
-                    name = cursor.getString(nameIndex) ?: name
-                }
-                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (sizeIndex != -1 && !cursor.isNull(sizeIndex)) {
-                    val bytes = cursor.getLong(sizeIndex)
-                    sizeStr = when {
-                        bytes < 1024 -> "$bytes B"
-                        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-                        else -> String.format(Locale.US, "%.1f MB", bytes / (1024f * 1024f))
-                    }
-                }
+                if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
+                if (sizeIdx >= 0) sizeBytes = cursor.getLong(sizeIdx)
             }
         }
     } catch (_: Exception) {}
-    return Pair(name, sizeStr)
+
+    val formattedSize = when {
+        sizeBytes <= 0L -> ""
+        sizeBytes < 1024L -> "$sizeBytes B"
+        sizeBytes < 1024L * 1024L -> "${sizeBytes / 1024L} KB"
+        else -> String.format(Locale.US, "%.1f MB", sizeBytes / (1024.0 * 1024.0))
+    }
+    return name to formattedSize
 }

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">NotifAI</string>
+    <string name="notification_channel_name">NotifAI - Assistant IA dans les Notifications</string>
+    <string name="notification_channel_desc">Posez vos questions à l\'IA directement depuis le volet de notifications</string>
+    <string name="action_reply_label">Demander à l\'IA...</string>
+    <string name="action_attach_file">Envoyer du contenu</string>
+    <string name="action_actions_menu">Actions</string>
+    <string name="accessibility_fast_screenshot_desc">Permet une capture d\'écran instantanée en un clic depuis la notification NotifAI sans fenêtres de confirmation répétées.</string>
+    <string name="accessibility_service_desc">Permet une capture d\'écran instantanée en un clic depuis la notification NotifAI sans fenêtres de confirmation répétées.</string>
+</resources>

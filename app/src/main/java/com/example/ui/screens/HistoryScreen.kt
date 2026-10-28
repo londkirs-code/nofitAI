@@ -5,8 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,25 +19,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Forum
-import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,10 +53,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.ChatConversationEntity
 import com.example.data.model.ChatMessageEntity
-import com.example.service.NotificationChatService
 import com.example.ui.viewmodel.NotifAiViewModel
+import com.example.util.AppStrings
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -74,6 +68,7 @@ fun HistoryScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val currentLang = AppStrings.langOverrideState
     val conversations by viewModel.conversations.collectAsState()
     val selectedId by viewModel.selectedConversationId.collectAsState()
     val messages by viewModel.messagesForSelected.collectAsState()
@@ -85,7 +80,7 @@ fun HistoryScreen(
         if (searchQuery.isBlank()) conversations
         else conversations.filter {
             it.title.contains(searchQuery, ignoreCase = true) ||
-                    it.lastSnippet.contains(searchQuery, ignoreCase = true)
+                it.lastSnippet.contains(searchQuery, ignoreCase = true)
         }
     }
 
@@ -95,14 +90,12 @@ fun HistoryScreen(
             .padding(16.dp)
     ) {
         if (selectedId != null) {
-            // Detailed message view for conversation
             ConversationDetailView(
                 messages = messages,
                 onBack = { viewModel.selectConversation(null) },
                 onDelete = { viewModel.deleteConversation(selectedId!!) }
             )
         } else {
-            // Conversation list view
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -112,12 +105,15 @@ fun HistoryScreen(
             ) {
                 Column {
                     Text(
-                        text = "היסטוריית שיחות",
+                        text = AppStrings.tr("היסטוריית שיחות", "Chat History"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${conversations.size} שיחות שמורות באפליקציה",
+                        text = AppStrings.tr(
+                            "${conversations.size} שיחות שמורות באפליקציה",
+                            "${conversations.size} conversations saved in app"
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -130,7 +126,7 @@ fun HistoryScreen(
                     ) {
                         Icon(
                             Icons.Default.DeleteSweep,
-                            contentDescription = "מחק הכל",
+                            contentDescription = AppStrings.tr("מחק הכל", "Clear All"),
                             tint = MaterialTheme.colorScheme.error
                         )
                     }
@@ -141,7 +137,7 @@ fun HistoryScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("חיפוש בהיסטוריית השיחות...") },
+                    placeholder = { Text(AppStrings.tr("חיפוש בהיסטוריית השיחות...", "Search chat history...")) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
                     modifier = Modifier
@@ -156,7 +152,9 @@ fun HistoryScreen(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer
                     ),
-                    modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp)
                 ) {
                     Column(
                         modifier = Modifier.padding(24.dp),
@@ -170,12 +168,19 @@ fun HistoryScreen(
                             modifier = Modifier.size(40.dp)
                         )
                         Text(
-                            text = if (searchQuery.isBlank()) "אין היסטוריית שיחות עדיין" else "לא נמצאו שיחות תואמות",
+                            text = if (searchQuery.isBlank()) {
+                                AppStrings.tr("אין היסטוריית שיחות עדיין", "No chat history yet")
+                            } else {
+                                AppStrings.tr("לא נמצאו שיחות תואמות", "No matching conversations found")
+                            },
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "כל שאלה שתענה עליה מתוך ההתראה תישמר כאן אוטומטית לעיון, חיפוש והעתקה בכל עת.",
+                            text = AppStrings.tr(
+                                "כל שאלה שתענה עליה מתוך ההתראה תישמר כאן אוטומטית לעיון, חיפוש והעתקה בכל עת.",
+                                "Every question answered from the notification is saved here automatically for browsing, searching, and copying."
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -206,23 +211,39 @@ fun HistoryScreen(
                 .fillMaxWidth(0.95f)
                 .padding(vertical = 12.dp),
             shape = RoundedCornerShape(24.dp),
-            title = { Text("מחיקת כל ההיסטוריה", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
-            text = { Text("האם אתה בטוח שברצונך למחוק את כל שיחות ה-AI שנשמרו באפליקציה? פעולה זו היא בלתי הפיכה.") },
+            title = {
+                Text(
+                    AppStrings.tr("מחיקת כל ההיסטוריה", "Clear All History"),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    AppStrings.tr(
+                        "האם אתה בטוח שברצונך למחוק את כל שיחות ה-AI שנשמרו באפליקציה? פעולה זו היא בלתי הפיכה.",
+                        "Are you sure you want to delete all saved AI conversations? This action cannot be undone."
+                    )
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.clearAllHistory()
                         showClearConfirmDialog = false
-                        Toast.makeText(context, "ההיסטוריה נמחקה", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            AppStrings.tr("ההיסטוריה נמחקה", "History cleared"),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
-                    Text("מחק הכל")
+                    Text(AppStrings.tr("מחק הכל", "Delete All"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirmDialog = false }) {
-                    Text("ביטול")
+                    Text(AppStrings.tr("ביטול", "Cancel"))
                 }
             }
         )
@@ -260,14 +281,14 @@ fun ConversationCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "${conversation.messageCount} הודעות",
+                        text = AppStrings.tr("${conversation.messageCount} הודעות", "${conversation.messageCount} messages"),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = conversation.lastSnippet.ifBlank { "שיחת AI" },
+                    text = conversation.lastSnippet.ifBlank { AppStrings.tr("שיחת AI", "AI Conversation") },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2
@@ -283,7 +304,7 @@ fun ConversationCard(
             IconButton(onClick = onDelete) {
                 Icon(
                     Icons.Default.Delete,
-                    contentDescription = "מחק שיחה",
+                    contentDescription = AppStrings.tr("מחק שיחה", "Delete conversation"),
                     tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
                     modifier = Modifier.size(18.dp)
                 )
@@ -298,8 +319,6 @@ fun ConversationDetailView(
     onBack: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val context = LocalContext.current
-
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -310,24 +329,34 @@ fun ConversationDetailView(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "חזור לרשימה")
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = AppStrings.tr("חזור לרשימה", "Back to list")
+                    )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "תוכן השיחה",
+                    text = AppStrings.tr("תוכן השיחה", "Conversation Messages"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
 
             IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "מחק שיחה זו", tint = MaterialTheme.colorScheme.error)
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = AppStrings.tr("מחק שיחה זו", "Delete this conversation"),
+                    tint = MaterialTheme.colorScheme.error
+                )
             }
         }
 
         if (messages.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("טוען הודעות...", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    AppStrings.tr("טוען הודעות...", "Loading messages..."),
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         } else {
             LazyColumn(
@@ -375,14 +404,13 @@ fun MessageBubble(message: ChatMessageEntity) {
             modifier = Modifier.fillMaxWidth(0.92f)
         ) {
             Column(modifier = Modifier.padding(14.dp)) {
-                // Header (sender / model)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isUser) "אתה" else (message.model ?: message.provider ?: "NotifAI"),
+                        text = if (isUser) AppStrings.tr("אתה", "You") else (message.model ?: message.provider ?: "NotifAI"),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
@@ -394,11 +422,19 @@ fun MessageBubble(message: ChatMessageEntity) {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val clip = ClipData.newPlainText("Message", message.content)
                                 clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "הועתק ללוח! 📋", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    AppStrings.tr("הועתק ללוח! 📋", "Copied to clipboard! 📋"),
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
-                            Icon(Icons.Default.ContentCopy, contentDescription = "העתק", modifier = Modifier.size(14.dp))
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = AppStrings.tr("העתק", "Copy"),
+                                modifier = Modifier.size(14.dp)
+                            )
                         }
 
                         IconButton(
@@ -407,11 +443,20 @@ fun MessageBubble(message: ChatMessageEntity) {
                                     type = "text/plain"
                                     putExtra(Intent.EXTRA_TEXT, message.content)
                                 }
-                                context.startActivity(Intent.createChooser(shareIntent, "שתף הודעה"))
+                                context.startActivity(
+                                    Intent.createChooser(
+                                        shareIntent,
+                                        AppStrings.tr("שתף הודעה", "Share message")
+                                    )
+                                )
                             },
                             modifier = Modifier.size(28.dp)
                         ) {
-                            Icon(Icons.Default.Share, contentDescription = "שתף", modifier = Modifier.size(14.dp))
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = AppStrings.tr("שתף", "Share"),
+                                modifier = Modifier.size(14.dp)
+                            )
                         }
                     }
                 }

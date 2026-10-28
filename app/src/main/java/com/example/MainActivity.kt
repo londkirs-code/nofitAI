@@ -22,14 +22,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
@@ -38,6 +41,8 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,6 +55,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -67,49 +73,58 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.service.NotificationChatService
 import com.example.ui.screens.ApiKeysScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.NotificationCenterScreen
 import com.example.ui.screens.SecuritySettingsScreen
 import com.example.ui.theme.NotifAiTheme
 import com.example.ui.viewmodel.NotifAiViewModel
+import com.example.util.AppStrings
 
 enum class NavTab(
-    val title: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
-    NOTIFICATION("התראה", Icons.Filled.NotificationsActive, Icons.Outlined.Notifications, "nav_notification"),
-    KEYS("מפתחות", Icons.Filled.Key, Icons.Outlined.Key, "nav_keys"),
-    HISTORY("היסטוריה", Icons.Filled.History, Icons.Outlined.History, "nav_history"),
-    SECURITY("הגדרות", Icons.Filled.Settings, Icons.Outlined.Settings, "nav_security")
+    NOTIFICATION(Icons.Filled.NotificationsActive, Icons.Outlined.Notifications, "nav_notification"),
+    KEYS(Icons.Filled.Key, Icons.Outlined.Key, "nav_keys"),
+    HISTORY(Icons.Filled.History, Icons.Outlined.History, "nav_history"),
+    SECURITY(Icons.Filled.Settings, Icons.Outlined.Settings, "nav_security");
+
+    fun localizedTitle(): String = when (this) {
+        NOTIFICATION -> AppStrings.tabNotification
+        KEYS -> AppStrings.tabKeys
+        HISTORY -> AppStrings.tabHistory
+        SECURITY -> AppStrings.tabSettings
+    }
 }
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppStrings.initFromPrefs(this)
         enableEdgeToEdge()
 
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
 
         setContent {
             NotifAiTheme {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                val activeLang = AppStrings.langOverrideState
+                CompositionLocalProvider(LocalLayoutDirection provides AppStrings.layoutDirection()) {
                     val viewModel: NotifAiViewModel = viewModel()
                     MainAppContent(
                         viewModel = viewModel,
-                        intent = intent
+                        intent = intent,
+                        langKey = activeLang.code
                     )
                 }
             }
@@ -131,7 +146,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppContent(
     viewModel: NotifAiViewModel,
-    intent: Intent?
+    intent: Intent?,
+    langKey: String = "auto"
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -140,25 +156,65 @@ fun MainAppContent(
     val isServiceActive by viewModel.isServiceActive.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Android 13+ Notification permission request
+    // Pre-permission explanation dialog state for Notification permission (Task #22)
+    var showNotifPermissionRationaleDialog by remember { mutableStateOf(false) }
+
+    val hasNotificationPermission = {
+        val runtimeGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        val managerEnabled = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+        runtimeGranted && managerEnabled
+    }
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted: Boolean ->
-        if (isGranted) {
+        val enabledNow = isGranted && androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+        if (enabledNow) {
             viewModel.toggleService(true)
-            Toast.makeText(context, "התראת NotifAI הופעלה בהצלחה! 🔔", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                context,
+                AppStrings.tr("התראת NotifAI הופעלה בהצלחה! 🔔", "NotifAI notification activated! 🔔"),
+                Toast.LENGTH_SHORT
+            ).show()
         } else {
-            Toast.makeText(context, "שים לב: ללא הרשאת התראות, NotifAI לא יוכל לפעול בהתראה", Toast.LENGTH_LONG).show()
+            // If Android blocked the dialog (Don't ask again) or notifications are disabled in system settings, open App Notification Settings
+            try {
+                val settingsIntent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(settingsIntent)
+            } catch (_: Exception) {}
+            Toast.makeText(
+                context,
+                AppStrings.tr(
+                    "נא לאפשר הרשאת התראות כדי להציג את שורת הצ'אט של NotifAI",
+                    "Please enable Notification permission to show the NotifAI chat bar"
+                ),
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
-    // Automatically activate the notification every time the user enters/opens the app
+    val requestOrActivateNotification = {
+        if (hasNotificationPermission()) {
+            viewModel.toggleService(true)
+            Toast.makeText(
+                context,
+                AppStrings.tr("התראת NotifAI פעילה ומרועננת! 🔔", "NotifAI notification is active & refreshed! 🔔"),
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            showNotifPermissionRationaleDialog = true
+        }
+    }
+
+    // Automatically activate the notification every time the user enters/opens the app if permission is granted
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                val hasPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                if (hasPermission) {
+                if (hasNotificationPermission()) {
                     viewModel.toggleService(true)
                 }
             }
@@ -170,12 +226,9 @@ fun MainAppContent(
     }
 
     LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                viewModel.toggleService(true)
-            }
+        if (!hasNotificationPermission()) {
+            // Task #22: Show clear explanation dialog before requesting permission
+            showNotifPermissionRationaleDialog = true
         } else {
             viewModel.toggleService(true)
         }
@@ -189,7 +242,11 @@ fun MainAppContent(
             }
             if (!sharedText.isNullOrBlank()) {
                 viewModel.sendTestQuery(sharedText)
-                Toast.makeText(context, "הטקסט שנשלח הועבר למענה בהתראה!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    AppStrings.tr("הטקסט שנשלח הועבר למענה בהתראה!", "Shared text sent to notification!"),
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
 
@@ -210,6 +267,66 @@ fun MainAppContent(
         }
     }
 
+    if (showNotifPermissionRationaleDialog) {
+        AlertDialog(
+            onDismissRequest = { showNotifPermissionRationaleDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .padding(vertical = 12.dp),
+            shape = RoundedCornerShape(24.dp),
+            icon = {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = AppStrings.notifPermissionTitle,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = AppStrings.notifPermissionExplanation,
+                    style = MaterialTheme.typography.bodyMedium,
+                    lineHeight = 21.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showNotifPermissionRationaleDialog = false
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            try {
+                                val settingsIntent = Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                    putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(settingsIntent)
+                            } catch (_: Exception) {}
+                        }
+                    },
+                    modifier = Modifier.testTag("confirm_notif_permission_rationale_btn")
+                ) {
+                    Text(AppStrings.notifPermissionApproveBtn, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showNotifPermissionRationaleDialog = false }
+                ) {
+                    Text(AppStrings.cancelBtn)
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -219,7 +336,7 @@ fun MainAppContent(
                             modifier = Modifier
                                 .size(10.dp)
                                 .background(
-                                    if (isServiceActive) MaterialTheme.colorScheme.secondary
+                                    if (isServiceActive && hasNotificationPermission()) MaterialTheme.colorScheme.secondary
                                     else MaterialTheme.colorScheme.error,
                                     CircleShape
                                 )
@@ -236,15 +353,19 @@ fun MainAppContent(
                 actions = {
                     IconButton(
                         onClick = {
-                            viewModel.toggleService(true)
-                            Toast.makeText(context, "התראת NotifAI פעילה ומרועננת! 🔔", Toast.LENGTH_SHORT).show()
+                            requestOrActivateNotification()
                         },
                         modifier = Modifier.testTag("top_bar_notification_action_btn")
                     ) {
+                        val activeAndPermitted = isServiceActive && hasNotificationPermission()
                         Icon(
-                            imageVector = if (isServiceActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
-                            contentDescription = if (isServiceActive) "רענן התראה" else "הפעל התראה",
-                            tint = if (isServiceActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            imageVector = if (activeAndPermitted) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
+                            contentDescription = if (activeAndPermitted) {
+                                AppStrings.tr("רענן התראה", "Refresh Notification")
+                            } else {
+                                AppStrings.tr("הפעל התראה ובקש הרשאה", "Enable Notification & Request Permission")
+                            },
+                            tint = if (activeAndPermitted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                         )
                     }
                 },
@@ -258,20 +379,21 @@ fun MainAppContent(
                 containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
             ) {
-                NavTab.values().forEach { tab ->
+                NavTab.entries.forEach { tab ->
                     val selected = currentTab == tab
+                    val title = tab.localizedTitle()
                     NavigationBarItem(
                         selected = selected,
                         onClick = { currentTab = tab },
                         icon = {
                             Icon(
                                 imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                contentDescription = tab.title
+                                contentDescription = title
                             )
                         },
                         label = {
                             Text(
-                                text = tab.title,
+                                text = title,
                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                                 fontSize = 12.sp
                             )
@@ -295,7 +417,10 @@ fun MainAppContent(
                 label = "tab_transition"
             ) { tab ->
                 when (tab) {
-                    NavTab.NOTIFICATION -> NotificationCenterScreen(viewModel = viewModel)
+                    NavTab.NOTIFICATION -> NotificationCenterScreen(
+                        viewModel = viewModel,
+                        onRequestActivateNotification = requestOrActivateNotification
+                    )
                     NavTab.KEYS -> ApiKeysScreen(viewModel = viewModel)
                     NavTab.HISTORY -> HistoryScreen(viewModel = viewModel)
                     NavTab.SECURITY -> SecuritySettingsScreen(viewModel = viewModel)

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">NotifAI</string>
+    <string name="notification_channel_name">NotifAI - עוזר AI בהתראות</string>
+    <string name="notification_channel_desc">שאל את ה-AI ישירות מווילון ההתראות</string>
+    <string name="action_reply_label">שאל AI...</string>
+    <string name="action_attach_file">שלח תוכן</string>
+    <string name="action_actions_menu">פעולות</string>
+    <string name="accessibility_fast_screenshot_desc">מאפשר צילום מסך מיידי בלחיצה אחת מתוך התראת NotifAI וניתוחו ב-AI ללא חלונית אישור חוזרת בכל צילום.</string>
+    <string name="accessibility_service_desc">מאפשר צילום מסך מיידי בלחיצה אחת מתוך התראת NotifAI וניתוחו ב-AI ללא חלונית אישור חוזרת בכל צילום.</string>
+</resources>

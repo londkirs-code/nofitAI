@@ -4,22 +4,128 @@ data class AiModelInfo(
     val id: String,
     val displayName: String = id,
     val isFree: Boolean = false,
-    val description: String? = null,
     val contextWindow: Int? = null,
-    val isRecommended: Boolean = false
+    val description: String? = null,
+    val isRecommended: Boolean = false,
+    val explicitCapabilities: Set<AiTaskType>? = null
 ) {
-    val roleBadge: String
-        get() = when {
-            id.contains("reasoner", ignoreCase = true) || id.contains("r1", ignoreCase = true) || id.contains("o1", ignoreCase = true) || id.contains("o3", ignoreCase = true) || id.contains("qwq", ignoreCase = true) -> "🧠 חשיבה והיגיון"
-            id.contains("code", ignoreCase = true) || id.contains("coder", ignoreCase = true) -> "💻 קידוד ותכנות"
-            id.contains("vision", ignoreCase = true) -> "👁️ מולטימדיה וראייה"
-            id.contains("flash", ignoreCase = true) || id.contains("instant", ignoreCase = true) || id.contains("haiku", ignoreCase = true) || id.contains("mini", ignoreCase = true) || id.contains("8b", ignoreCase = true) -> "⚡ מהיר וחסכוני"
-            id.contains("pro", ignoreCase = true) || id.contains("sonnet", ignoreCase = true) || id.contains("opus", ignoreCase = true) || id.contains("large", ignoreCase = true) || id.contains("70b", ignoreCase = true) || id.contains("gpt-4o", ignoreCase = true) -> "🌟 מודל דגל מתקדם"
-            else -> "💬 שיחה וסיוע כללי"
+    /**
+     * Automatically infers the capabilities/modalities of the model (Task #6)
+     * unless explicitly overridden by the user.
+     */
+    val capabilities: Set<AiTaskType>
+        get() {
+            if (!explicitCapabilities.isNullOrEmpty()) return explicitCapabilities
+            val lower = id.lowercase()
+            val set = mutableSetOf<AiTaskType>()
+            when {
+                lower.contains("dall-e") || lower.contains("flux") || lower.contains("stable-diffusion") ||
+                        lower.contains("imagen") || lower.contains("sdxl") || lower.contains("midjourney") ||
+                        lower.contains("image-generation") -> {
+                    set.add(AiTaskType.IMAGE_GEN)
+                    if (lower.contains("gemini")) {
+                        set.add(AiTaskType.TEXT)
+                        set.add(AiTaskType.IMAGE_INPUT)
+                    }
+                }
+                lower.contains("tts") || lower.contains("audio") || lower.contains("speech") ||
+                        lower.contains("eleven") || lower.contains("music") || lower.contains("suno") -> {
+                    set.add(AiTaskType.AUDIO_GEN)
+                    if (lower.contains("gpt-4o")) {
+                        set.add(AiTaskType.TEXT)
+                    }
+                }
+                lower.contains("sora") || lower.contains("veo") || lower.contains("runway") ||
+                        lower.contains("kling") || lower.contains("luma") || lower.contains("video") -> {
+                    set.add(AiTaskType.VIDEO_GEN)
+                }
+                else -> {
+                    set.add(AiTaskType.TEXT)
+                    set.add(AiTaskType.FILE_INPUT)
+                    if (lower.contains("vision") || lower.contains("4o") || lower.contains("gemini") ||
+                        lower.contains("claude-3") || lower.contains("pixtral") || lower.contains("scout") ||
+                        lower.contains("maverick") || lower.contains("grok-2-vision") || lower.contains("vl")
+                    ) {
+                        set.add(AiTaskType.IMAGE_INPUT)
+                    }
+                }
+            }
+            return set
         }
 
-    val pricingBadge: String
-        get() = if (isFree || id.contains(":free", ignoreCase = true)) "חינמי" else "בתשלום"
+    /**
+     * Automatic quality score so the best models for each provider are sorted to the top (Task #5).
+     */
+    val qualityScore: Int
+        get() {
+            val lower = id.lowercase()
+            var score = 50
+            if (isRecommended) score += 100
+
+            // Top-tier flagship & high-value models
+            when {
+                lower == "gemini-2.5-pro" || lower == "gemini-2.5-flash" -> score += 95
+                lower == "llama-3.3-70b-versatile" -> score += 95
+                lower.contains("claude-3-7-sonnet") || lower.contains("claude-3.7-sonnet") -> score += 95
+                lower == "gpt-4o" || lower == "openai/gpt-4o" -> score += 94
+                lower == "gpt-4o-mini" || lower == "openai/gpt-4o-mini" -> score += 92
+                lower.contains("deepseek-chat-v3") || lower == "deepseek-chat" -> score += 93
+                lower.contains("deepseek-r1") || lower == "deepseek-reasoner" -> score += 91
+                lower.contains("grok-3") -> score += 93
+                lower.contains("mistral-large") -> score += 90
+                lower.contains("llama-4") -> score += 92
+                lower.contains("qwq-32b") || lower.contains("qwen2.5-72b") -> score += 88
+                lower.contains("gemini-2.0-flash") -> score += 89
+                lower.contains("claude-3-5-sonnet") || lower.contains("claude-3.5-sonnet") -> score += 88
+                lower.contains("o3-mini") || lower.contains("o1") -> score += 87
+                lower.contains("70b") -> score += 40
+                lower.contains("32b") -> score += 30
+                lower.contains("8b") || lower.contains("flash") || lower.contains("mini") -> score += 25
+            }
+
+            if (isFree) score += 15
+            if (contextWindow != null && contextWindow >= 128000) score += 10
+            return score
+        }
+
+    /**
+     * Infers the primary role/purpose of the model in Hebrew for clear UI categorization (Task #6).
+     */
+    val roleBadge: String
+        get() {
+            val lower = id.lowercase()
+            return when {
+                lower.contains("dall-e") || lower.contains("flux") || lower.contains("imagen") ||
+                        lower.contains("image-generation") || lower.contains("sdxl") -> "🎨 יצירת תמונות"
+                lower.contains("tts") || lower.contains("speech") || lower.contains("audio") -> "🔊 יצירת סאונד/שמע"
+                lower.contains("sora") || lower.contains("veo") || lower.contains("video") -> "🎬 יצירת וידאו"
+                lower.contains("r1") || lower.contains("reason") || lower.contains("qwq") ||
+                        lower.startsWith("o1") || lower.startsWith("o3") || lower.contains("think") -> "🧠 חשיבה ולוגיקה"
+                lower.contains("code") || lower.contains("codestral") || lower.contains("qwen2.5-coder") -> "💻 קוד ופיתוח"
+                lower.contains("vision") || lower.contains("pixtral") || lower.contains("vl") ||
+                        lower.contains("4o") || lower.contains("gemini") || lower.contains("claude-3") ||
+                        lower.contains("scout") -> "👁️ טקסט + ראייה (Vision)"
+                lower.contains("instant") || lower.contains("mini") || lower.contains("haiku") ||
+                        lower.contains("8b") || lower.contains("9b") -> "⚡ טקסט מהיר וחסכוני"
+                lower.contains("70b") || lower.contains("large") || lower.contains("pro") ||
+                        lower.contains("sonnet") || lower.contains("opus") || lower.contains("grok-3") -> "🚀 מודל דגל (איכות מקסימלית)"
+                else -> "💬 יצירת טקסט ושיחה"
+            }
+        }
+
+    companion object {
+        /**
+         * Sorts models so the best/recommended models for the provider appear at the top (Task #5).
+         */
+        fun sortBestFirst(models: List<AiModelInfo>): List<AiModelInfo> {
+            return models.sortedWith(
+                compareByDescending<AiModelInfo> { it.qualityScore }
+                    .thenByDescending { it.isRecommended }
+                    .thenByDescending { it.isFree }
+                    .thenBy { it.id }
+            )
+        }
+    }
 }
 
 data class FetchModelsResponse(

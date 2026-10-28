@@ -3,19 +3,24 @@ package com.example.ui
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
-import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import com.example.service.FastScreenCaptureAccessibilityService
 import com.example.service.MediaProjectionCaptureService
-
-import androidx.lifecycle.lifecycleScope
+import com.example.util.AppStrings
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * On-demand Screen Capture Activity (Tasks #22 & #23).
+ * Triggered when the user taps "צילום מסך" in the notification or app.
+ * If the instant Accessibility screenshot service is already active, captures immediately with 0 prompts.
+ * Otherwise, displays a clear explanation dialog explaining WHY screen capture permission is needed
+ * before opening Accessibility settings or launching the one-time Android MediaProjection prompt.
+ */
 class ScreenCaptureActivity : ComponentActivity() {
 
     private val captureLauncher = registerForActivityResult(
@@ -34,6 +39,7 @@ class ScreenCaptureActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppStrings.initFromPrefs(this)
         overridePendingTransition(0, 0)
 
         // 1. If instant accessibility service is active, capture immediately with 0 prompts!
@@ -48,7 +54,6 @@ class ScreenCaptureActivity : ComponentActivity() {
         // 2. Check if accessibility service is enabled in system settings
         val isEnabledInSettings = FastScreenCaptureAccessibilityService.isAccessibilityServiceEnabled(this)
         if (isEnabledInSettings) {
-            // Already enabled! Wait up to 400ms for binder to connect if process was dormant
             lifecycleScope.launch {
                 var attempts = 0
                 while (FastScreenCaptureAccessibilityService.instance == null && attempts < 8) {
@@ -60,31 +65,43 @@ class ScreenCaptureActivity : ComponentActivity() {
                     activeInstance.captureNow()
                     finish()
                 } else {
-                    launchMediaProjectionCapture()
+                    showPermissionExplanationBeforeCapture()
                 }
             }
         } else {
-            showInstantCaptureGuideDialog()
+            showPermissionExplanationBeforeCapture()
         }
     }
 
-    private fun showInstantCaptureGuideDialog() {
+    private fun showPermissionExplanationBeforeCapture() {
         AlertDialog.Builder(this)
-            .setTitle("📸 צילום מסך מיידי ללא אישור בכל פעם")
+            .setTitle(AppStrings.tr("📸 למה נדרשת הרשאת צילום מסך?", "📸 Why is Screen Capture Permission Needed?"))
             .setMessage(
-                "כדי לצלם מסך באופן מיידי ובלחיצה אחת מתוך ההתראה (בלי שגוגל יבקש אישור בכל פעם מחדש):\n\n" +
-                "הפעל פעם אחת את 'NotifAI' בהגדרות הנגישות של המכשיר."
+                AppStrings.tr(
+                    "בחרת לשלוח צילום מסך ל-NotifAI.\n\n" +
+                        "למה ההרשאה נדרשת?\n" +
+                        "כדי ש-NotifAI תוכל ללכוד את מה שמוצג כעת על המסך שלך ולהעביר את התמונה למודל ה-AI (Vision) לצורך ניתוח, תרגום או מענה בהתראה.\n\n" +
+                        "כיצד תרצה לאשר?\n" +
+                        "• מומלץ: הפעל פעם אחת את 'NotifAI' בהגדרות הנגישות לצילום מיידי בלחיצה אחת ללא שאלות חוזרות.\n" +
+                        "• חלופה: אשר לכידת מסך חד-פעמית כעת דרך מערכת אנדרואיד.",
+                    "You chose to send a screenshot to NotifAI.\n\n" +
+                        "Why is this permission needed?\n" +
+                        "So NotifAI can capture what is currently on your screen and send the image to the Vision AI model for analysis, translation, or answering directly in the notification.\n\n" +
+                        "How would you like to proceed?\n" +
+                        "• Recommended: Enable 'NotifAI' once in Accessibility Settings for instant 1-tap screenshots without repeated prompts.\n" +
+                        "• Alternative: Approve a one-time screen capture now via Android."
+                )
             )
-            .setPositiveButton("⚡ הפעל בהגדרות נגישות") { dialog, _ ->
+            .setPositiveButton(AppStrings.tr("⚡ הפעל צילום מיידי קבוע (נגישות)", "⚡ Enable Instant 1-Tap Screenshot")) { dialog, _ ->
                 dialog.dismiss()
                 FastScreenCaptureAccessibilityService.openAccessibilitySettings(this)
                 finish()
             }
-            .setNegativeButton("אישור חד-פעמי עכשיו") { dialog, _ ->
+            .setNegativeButton(AppStrings.tr("📸 צילום חד-פעמי עכשיו", "📸 One-Time Capture Now")) { dialog, _ ->
                 dialog.dismiss()
                 launchMediaProjectionCapture()
             }
-            .setNeutralButton("ביטול") { dialog, _ ->
+            .setNeutralButton(AppStrings.tr("ביטול", "Cancel")) { dialog, _ ->
                 dialog.dismiss()
                 finish()
             }

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">NotifAI</string>
+    <string name="notification_channel_name">NotifAI - ИИ-помощник в уведомлениях</string>
+    <string name="notification_channel_desc">Задавайте вопросы ИИ прямо из шторки уведомлений</string>
+    <string name="action_reply_label">Спросить ИИ...</string>
+    <string name="action_attach_file">Отправить контент</string>
+    <string name="action_actions_menu">Действия</string>
+    <string name="accessibility_fast_screenshot_desc">Позволяет мгновенно делать скриншот одним нажатием из уведомления NotifAI для анализа ИИ без повторных диалогов подтверждения.</string>
+    <string name="accessibility_service_desc">Позволяет мгновенно делать скриншот одним нажатием из уведомления NotifAI для анализа ИИ без повторных диалогов подтверждения.</string>
+</resources>

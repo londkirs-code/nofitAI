@@ -38,7 +38,10 @@ interface ApiKeyDao {
     @Query("UPDATE api_keys SET suspendedUntil = :until, suspensionReason = :reason, failedRequests = failedRequests + 1, lastUsedAt = :now WHERE id = :id")
     suspend fun markSuspended(id: String, until: Long, reason: String, now: Long = System.currentTimeMillis())
 
-    @Query("UPDATE api_keys SET suspendedUntil = 0, suspensionReason = NULL WHERE id = :id")
+    @Query("UPDATE api_keys SET modelSuspensionsCsv = :modelSuspensionsCsv, suspensionReason = :reason, failedRequests = failedRequests + 1, lastUsedAt = :now WHERE id = :id")
+    suspend fun markModelSuspended(id: String, modelSuspensionsCsv: String, reason: String, now: Long = System.currentTimeMillis())
+
+    @Query("UPDATE api_keys SET suspendedUntil = 0, suspensionReason = NULL, modelSuspensionsCsv = '' WHERE id = :id")
     suspend fun clearSuspension(id: String)
 
     @Query("UPDATE api_keys SET totalRequests = totalRequests + 1, successfulRequests = successfulRequests + 1, lastUsedAt = :now WHERE id = :id")

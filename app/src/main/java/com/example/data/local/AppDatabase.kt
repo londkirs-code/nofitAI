@@ -13,7 +13,7 @@ import com.example.data.model.ChatConversationEntity
 import com.example.data.model.ChatMessageEntity
 import com.example.data.model.ProviderType
 
-class Converters {
+class DatabaseConverters {
     @TypeConverter
     fun fromProviderType(value: ProviderType): String = value.name
 
@@ -21,7 +21,7 @@ class Converters {
     fun toProviderType(value: String): ProviderType = try {
         ProviderType.valueOf(value)
     } catch (_: Exception) {
-        ProviderType.GEMINI
+        ProviderType.GROQ
     }
 }
 
@@ -31,10 +31,10 @@ class Converters {
         ChatConversationEntity::class,
         ChatMessageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
-@TypeConverters(Converters::class)
+@TypeConverters(DatabaseConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun apiKeyDao(): ApiKeyDao
     abstract fun chatDao(): ChatDao
@@ -43,11 +43,20 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE api_keys ADD COLUMN temperature REAL NOT NULL DEFAULT 0.7")
-                db.execSQL("ALTER TABLE api_keys ADD COLUMN maxTokens INTEGER NOT NULL DEFAULT 4096")
-                db.execSQL("ALTER TABLE api_keys ADD COLUMN systemPrompt TEXT DEFAULT NULL")
+                try {
+                    db.execSQL("ALTER TABLE api_keys ADD COLUMN supportedTasks TEXT NOT NULL DEFAULT 'TEXT,IMAGE_INPUT,FILE_INPUT'")
+                } catch (_: Exception) {}
+                try {
+                    db.execSQL("ALTER TABLE api_keys ADD COLUMN fallbackModels TEXT NOT NULL DEFAULT ''")
+                } catch (_: Exception) {}
+                try {
+                    db.execSQL("ALTER TABLE api_keys ADD COLUMN customProtocol TEXT NOT NULL DEFAULT 'OPENAI'")
+                } catch (_: Exception) {}
+                try {
+                    db.execSQL("ALTER TABLE api_keys ADD COLUMN modelSuspensionsCsv TEXT NOT NULL DEFAULT ''")
+                } catch (_: Exception) {}
             }
         }
 
@@ -56,9 +65,9 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "notifai_database.db"
+                    "notifai_database"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

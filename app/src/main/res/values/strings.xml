@@ -1,17 +1,10 @@
 <resources>
     <string name="app_name">NotifAI</string>
-    <string name="notification_channel_name">שיחת NotifAI פעילה</string>
-    <string name="notification_channel_desc">התראה קבועה ואינטראקטיבית לשיחה ישירה עם AI</string>
-    <string name="notification_title">NotifAI • מוכן לשאלתך</string>
-    <string name="notification_reply_hint">הקלד שאלה ל-AI…</string>
-    <string name="notification_action_reply">שאל AI</string>
-    <string name="notification_action_copy">העתק תשובה</string>
-    <string name="notification_action_full">תשובה מלאה</string>
-    <string name="notification_action_attach">צרף קובץ</string>
-    <string name="notification_action_new_chat">שיחה חדשה</string>
-    <string name="notification_thinking">🤖 NotifAI מקליד תשובה…</string>
-    <string name="notification_copied_toast">התשובה הועתקה ללוח!</string>
-    <string name="notification_error_prefix">⚠️ שגיאה במענה: </string>
-    <string name="notification_fallback_notice">ℹ️ עבר למפתח חלופי עקב מגבלת מכסה</string>
-    <string name="accessibility_service_desc">מאפשר ל-NotifAI לצלם מסך באופן מיידי ובלחיצה אחת מתוך ההתראה ללא צורך באישור חוזר בכל פעם.</string>
+    <string name="notification_channel_name">NotifAI Direct Assistant</string>
+    <string name="notification_channel_desc">Ask AI directly from the notification shade</string>
+    <string name="action_reply_label">Ask AI...</string>
+    <string name="action_attach_file">Send Content</string>
+    <string name="action_actions_menu">Actions</string>
+    <string name="accessibility_fast_screenshot_desc">Enables instant 1-click screenshot capture directly from the NotifAI notification without repeated system confirmation dialogs.</string>
+    <string name="accessibility_service_desc">Enables instant 1-click screenshot capture directly from the NotifAI notification without repeated system confirmation dialogs.</string>
 </resources>

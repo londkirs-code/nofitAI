@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">NotifAI</string>
+    <string name="notification_channel_name">NotifAI - مساعد الذكاء الاصطناعي في الإشعارات</string>
+    <string name="notification_channel_desc">اسأل الذكاء الاصطناعي مباشرة من شريط الإشعارات</string>
+    <string name="action_reply_label">اسأل الذكاء الاصطناعي...</string>
+    <string name="action_attach_file">إرسال محتوى</string>
+    <string name="action_actions_menu">إجراءات</string>
+    <string name="accessibility_fast_screenshot_desc">يتيح التقاط الشاشة فوراً بنقرة واحدة من إشعار NotifAI وتحليلها بالذكاء الاصطناعي دون نوافذ تأكيد متكررة.</string>
+    <string name="accessibility_service_desc">يتيح التقاط الشاشة فوراً بنقرة واحدة من إشعار NotifAI وتحليلها بالذكاء الاصطناعي دون نوافذ تأكيد متكررة.</string>
+</resources>

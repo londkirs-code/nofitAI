@@ -77,8 +77,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.MainActivity
@@ -86,6 +84,7 @@ import com.example.NotifAiApplication
 import com.example.data.model.ChatMessageEntity
 import com.example.service.NotificationChatService
 import com.example.ui.theme.NotifAiTheme
+import com.example.util.AppStrings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
@@ -98,10 +97,12 @@ class ChatDialogActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppStrings.initFromPrefs(this)
 
         setContent {
+            val currentLang = AppStrings.langOverrideState
             NotifAiTheme {
-                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                CompositionLocalProvider(LocalLayoutDirection provides AppStrings.layoutDirection()) {
                     ChatDialogScreen(
                         onDismiss = { finish() },
                         onOpenFullApp = {
@@ -135,12 +136,13 @@ fun ChatDialogScreen(
     BackHandler { onDismiss() }
 
     var conversationId by remember { mutableStateOf<Long?>(null) }
-    var activeTitle by remember { mutableStateOf("שיחה פעילה") }
-    var isLoading by remember { mutableStateOf(false) }
+    var activeTitle by remember { mutableStateOf(AppStrings.tr("שיחה פעילה", "Active Conversation")) }
+    val isServiceProcessing by NotificationChatService.isProcessingFlow.collectAsState()
+    var isLocalLoading by remember { mutableStateOf(false) }
+    val isLoading = isServiceProcessing || isLocalLoading
     var inputQuery by remember { mutableStateOf("") }
     var fontSizeMultiplier by remember { mutableFloatStateOf(1f) }
 
-    // Fetch or create the active conversation ID
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val conv = repository?.getOrCreateActiveConversation()
@@ -163,20 +165,14 @@ fun ChatDialogScreen(
 
     val messageList by (messagesState?.collectAsState(initial = emptyList()) ?: remember { mutableStateOf(emptyList()) })
 
-    val latestBotMessage = remember(messageList) {
-        messageList.lastOrNull { it.role == "model" || it.role == "assistant" || it.role == "bot" }
-    }
-
     val listState = rememberLazyListState()
 
-    // Scroll to latest message whenever new messages arrive
     LaunchedEffect(messageList.size) {
         if (messageList.isNotEmpty()) {
             listState.animateScrollToItem(messageList.size - 1)
         }
     }
 
-    // Outer backdrop click dismisses dialog
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -188,7 +184,6 @@ fun ChatDialogScreen(
             .padding(horizontal = 6.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Floating Independent Dialog Card
         Card(
             shape = RoundedCornerShape(26.dp),
             colors = CardDefaults.cardColors(
@@ -214,7 +209,6 @@ fun ChatDialogScreen(
                     .fillMaxSize()
                     .padding(16.dp)
             ) {
-                // Header Bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -249,13 +243,15 @@ fun ChatDialogScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "• חלון עצמאי",
+                                    text = AppStrings.tr("• חלון עצמאי", "• Floating Chat"),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.secondary
                                 )
                             }
                             Text(
-                                text = NotificationChatService.latestModelUsed.ifBlank { "צ'אט מהתראה" },
+                                text = NotificationChatService.latestModelUsed.ifBlank {
+                                    AppStrings.tr("צ'אט מהתראה", "Notification Chat")
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary,
                                 maxLines = 1
@@ -263,7 +259,6 @@ fun ChatDialogScreen(
                         }
                     }
 
-                    // Action icons in Header
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(
                             onClick = {
@@ -274,7 +269,7 @@ fun ChatDialogScreen(
                         ) {
                             Icon(
                                 imageVector = if (fontSizeMultiplier >= 1.4f) Icons.Default.ZoomOut else Icons.Default.ZoomIn,
-                                contentDescription = "גודל טקסט",
+                                contentDescription = AppStrings.tr("גודל טקסט", "Text size"),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -290,7 +285,11 @@ fun ChatDialogScreen(
                                             activeTitle = newConv.title
                                         }
                                     }
-                                    Toast.makeText(context, "נפתחה שיחה חדשה 🧹", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("נפתחה שיחה חדשה 🧹", "Started new conversation 🧹"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 }
                             },
                             modifier = Modifier
@@ -299,7 +298,7 @@ fun ChatDialogScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.DeleteSweep,
-                                contentDescription = "שיחה חדשה",
+                                contentDescription = AppStrings.tr("שיחה חדשה", "New conversation"),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -313,7 +312,7 @@ fun ChatDialogScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = "סגור חלון",
+                                contentDescription = AppStrings.tr("סגור חלון", "Close window"),
                                 tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(22.dp)
                             )
@@ -326,7 +325,6 @@ fun ChatDialogScreen(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                 )
 
-                // Compact Status & Copy All Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -335,7 +333,7 @@ fun ChatDialogScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "דו-שיח (${messageList.size} הודעות):",
+                        text = AppStrings.tr("דו-שיח (${messageList.size} הודעות):", "Conversation (${messageList.size} messages):"),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -345,19 +343,23 @@ fun ChatDialogScreen(
                             TextButton(
                                 onClick = {
                                     val fullText = messageList.joinToString("\n\n") { msg ->
-                                        val sender = if (msg.role == "user") "אתה" else "NotifAI"
+                                        val sender = if (msg.role == "user") AppStrings.tr("אתה", "You") else "NotifAI"
                                         "[$sender]: ${msg.content}"
                                     }
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("NotifAI Full Chat", fullText))
-                                    Toast.makeText(context, "כל השיחה הועתקה ללוח! 📋", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("כל השיחה הועתקה ללוח! 📋", "Full conversation copied to clipboard! 📋"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
                                 },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                             ) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "העתק הכל",
+                                    text = AppStrings.tr("העתק הכל", "Copy All"),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -366,21 +368,26 @@ fun ChatDialogScreen(
                             TextButton(
                                 onClick = {
                                     val fullText = messageList.joinToString("\n\n") { msg ->
-                                        val sender = if (msg.role == "user") "אתה" else "NotifAI"
+                                        val sender = if (msg.role == "user") AppStrings.tr("אתה", "You") else "NotifAI"
                                         "[$sender]: ${msg.content}"
                                     }
                                     val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_TEXT, fullText)
                                     }
-                                    context.startActivity(Intent.createChooser(shareIntent, "שתף שיחה מלאה מ-NotifAI"))
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            AppStrings.tr("שתף שיחה מלאה מ-NotifAI", "Share full conversation from NotifAI")
+                                        )
+                                    )
                                 },
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
                             ) {
                                 Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "שתף הכל",
+                                    text = AppStrings.tr("שתף הכל", "Share All"),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -389,7 +396,6 @@ fun ChatDialogScreen(
                     }
                 }
 
-                // Scrollable Entire Conversation History
                 Box(
                     modifier = Modifier
                         .weight(1f)
@@ -411,12 +417,12 @@ fun ChatDialogScreen(
                                     tint = MaterialTheme.colorScheme.outline
                                 )
                                 Text(
-                                    text = "אין עדיין הודעות בשיחה זו",
+                                    text = AppStrings.tr("אין עדיין הודעות בשיחה זו", "No messages in this conversation yet"),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.outline
                                 )
                                 Text(
-                                    text = "הקלד שאלה למטה או ישירות מההתראה",
+                                    text = AppStrings.tr("הקלד שאלה למטה או ישירות מההתראה", "Type a question below or directly from the notification"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.outline
                                 )
@@ -438,7 +444,11 @@ fun ChatDialogScreen(
                                     onCopy = {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Message", message.content))
-                                        Toast.makeText(context, "הועתק ללוח 📋", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(
+                                            context,
+                                            AppStrings.tr("הועתק ללוח 📋", "Copied to clipboard 📋"),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
                                 )
                             }
@@ -446,7 +456,6 @@ fun ChatDialogScreen(
                     }
                 }
 
-                // Loading Indicator
                 AnimatedVisibility(
                     visible = isLoading,
                     enter = fadeIn(),
@@ -467,7 +476,7 @@ fun ChatDialogScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "NotifAI מקליד תשובה… ✍️",
+                            text = AppStrings.tr("NotifAI מקליד תשובה… ✍️", "NotifAI is generating a response… ✍️"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium
@@ -475,7 +484,6 @@ fun ChatDialogScreen(
                     }
                 }
 
-                // Quick Reply Input Bar
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
@@ -496,7 +504,7 @@ fun ChatDialogScreen(
                             onValueChange = { inputQuery = it },
                             placeholder = {
                                 Text(
-                                    "שאל משהו נוסף…",
+                                    AppStrings.tr("שאל משהו נוסף…", "Ask something else…"),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
                             },
@@ -524,25 +532,11 @@ fun ChatDialogScreen(
                                     val textToSend = inputQuery.trim()
                                     if (textToSend.isNotBlank() && !isLoading) {
                                         inputQuery = ""
-                                        isLoading = true
-
-                                        // Forward to notification service and AI
-                                        NotificationChatService.sendQueryToService(context, textToSend)
-
-                                        scope.launch {
-                                            try {
-                                                withContext(Dispatchers.IO) {
-                                                    repository?.askAi(
-                                                        prompt = textToSend,
-                                                        conversationId = conversationId
-                                                    )
-                                                }
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                            } finally {
-                                                isLoading = false
-                                            }
-                                        }
+                                        NotificationChatService.sendQueryToService(
+                                            context = context,
+                                            query = textToSend,
+                                            conversationId = conversationId
+                                        )
                                     }
                                 },
                                 enabled = inputQuery.isNotBlank() && !isLoading,
@@ -557,7 +551,7 @@ fun ChatDialogScreen(
                                 } else {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = "שלח",
+                                        contentDescription = AppStrings.tr("שלח", "Send"),
                                         tint = if (inputQuery.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -567,7 +561,6 @@ fun ChatDialogScreen(
                     }
                 }
 
-                // Footer link to open main app
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -588,7 +581,7 @@ fun ChatDialogScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "הגדרות ומפתחות באפליקציה המלאה",
+                            text = AppStrings.tr("הגדרות ומפתחות באפליקציה המלאה", "Settings & API Keys in Full App"),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -663,7 +656,7 @@ fun ChatMessageBubble(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isUser) "אתה" else (message.model ?: "NotifAI"),
+                        text = if (isUser) AppStrings.tr("אתה", "You") else (message.model ?: "NotifAI"),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f) else MaterialTheme.colorScheme.primary
@@ -683,7 +676,7 @@ fun ChatMessageBubble(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "העתק",
+                                    contentDescription = AppStrings.tr("העתק", "Copy"),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(13.dp)
                                 )
@@ -694,13 +687,18 @@ fun ChatMessageBubble(
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_TEXT, message.content)
                                     }
-                                    context.startActivity(Intent.createChooser(shareIntent, "שתף הודעה זו"))
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            AppStrings.tr("שתף הודעה זו", "Share this message")
+                                        )
+                                    )
                                 },
                                 modifier = Modifier.size(24.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Share,
-                                    contentDescription = "שתף",
+                                    contentDescription = AppStrings.tr("שתף", "Share"),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(13.dp)
                                 )
