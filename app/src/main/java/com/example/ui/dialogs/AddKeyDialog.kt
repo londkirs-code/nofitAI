@@ -1,5 +1,7 @@
 package com.example.ui.dialogs
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
@@ -110,6 +113,7 @@ import java.util.Locale
 fun AddKeyDialog(
     existingKey: ApiKeyEntity? = null,
     nextPriority: Int = 1,
+    initialRawKey: String = "",
     onFetchDetailedModels: suspend (ProviderType, String) -> FetchModelsResponse,
     onFetchDetailedModelsForExistingKey: (suspend (String) -> FetchModelsResponse)? = null,
     onDismiss: () -> Unit,
@@ -131,9 +135,14 @@ fun AddKeyDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var selectedProvider by remember { mutableStateOf(existingKey?.provider ?: ProviderType.GROQ) }
+    val initialDetectedProvider = remember(initialRawKey) {
+        if (initialRawKey.isNotBlank()) ProviderType.detectProviderFromKey(initialRawKey.trim()) else null
+    }
+    var selectedProvider by remember {
+        mutableStateOf(existingKey?.provider ?: initialDetectedProvider ?: ProviderType.GROQ)
+    }
     var providerMenuDialogOpen by remember { mutableStateOf(false) }
-    var autoDetectedProviderBadge by remember { mutableStateOf<ProviderType?>(null) }
+    var autoDetectedProviderBadge by remember { mutableStateOf<ProviderType?>(initialDetectedProvider) }
 
     var priority by remember { mutableIntStateOf(existingKey?.priority ?: nextPriority) }
     var name by remember {
@@ -142,7 +151,7 @@ fun AddKeyDialog(
         )
     }
     var userEditedNameManually by remember { mutableStateOf(existingKey != null) }
-    var apiKeyText by remember { mutableStateOf("") }
+    var apiKeyText by remember { mutableStateOf(initialRawKey.trim()) }
 
     // Custom API Provider fields
     var customBaseUrl by remember { mutableStateOf(existingKey?.customBaseUrl.orEmpty()) }
@@ -411,34 +420,208 @@ fun AddKeyDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Security Notice Banner
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Security,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                    // 1. TOP ELEMENT: API Key input - AUTO-DETECTS PROVIDER & FETCHES MODELS AUTOMATICALLY
+                    Text(
+                        text = AppStrings.tr(
+                            "1. הזנת מפתח API (מזהה ספק ומודלים אוטומטית מיד עם ההזנה):",
+                            "1. Enter API Key (Auto-detects provider & models immediately):"
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = { newText ->
+                            val trimmed = newText.trim()
+                            apiKeyText = trimmed
+                            errorMessage = null
+
+                            val detected = ProviderType.detectProviderFromKey(trimmed, name)
+                            if (detected != null) {
+                                applyProviderChange(detected, isAutoDetected = true)
+                            }
+                        },
+                        label = {
                             Text(
-                                text = AppStrings.tr(
-                                    "המפתח מוצפן בחומרת המכשיר (AES-256 GCM). כל המודלים החינמיים נטענים ראשונים ואחריהם שאר המודלים.",
-                                    "Key is hardware-encrypted (AES-256 GCM). All free models load first, followed by the rest."
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                if (existingKey == null) {
+                                    AppStrings.tr("הדבק או הקלד מפתח API כאן", "Paste or type API Key here")
+                                } else {
+                                    AppStrings.tr("מפתח API (שמור ומוצפן בחומרה 🔒)", "API Key (Hardware Encrypted 🔒)")
+                                }
                             )
+                        },
+                        placeholder = {
+                            Text(
+                                if (existingKey == null) selectedProvider.keyHint
+                                else AppStrings.tr(
+                                    "•••••••••••••••••••• (שמור - הזן חדש לדריסה בלבד)",
+                                    "•••••••••••••••••••• (Saved - enter new key to overwrite)"
+                                )
+                            )
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        val pasted = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                                        if (pasted.isNotBlank()) {
+                                            apiKeyText = pasted
+                                            errorMessage = null
+                                            val detected = ProviderType.detectProviderFromKey(pasted, name)
+                                            if (detected != null) {
+                                                applyProviderChange(detected, isAutoDetected = true)
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentPaste,
+                                        contentDescription = AppStrings.tr("הדבק מפתח מהלוח", "Paste key from clipboard"),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = AppStrings.tr("המפתח חסוי ומוצפן תמיד", "Key is always masked and encrypted"),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        },
+                        singleLine = true,
+                        isError = errorMessage != null,
+                        supportingText = {
+                            if (errorMessage != null) {
+                                Text(errorMessage!!, color = MaterialTheme.colorScheme.error)
+                            } else if (existingKey != null) {
+                                Text(
+                                    AppStrings.tr(
+                                        "המפתח שמור ומוצפן (AES-256 GCM). השאר ריק לשמירתו, או הקלד מפתח חדש לדריסה.",
+                                        "Key is saved & encrypted (AES-256 GCM). Leave blank to keep it, or type a new key to overwrite."
+                                    ),
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            } else {
+                                Text(
+                                    AppStrings.tr(
+                                        "ברגע שתדביק מפתח, הספק, הכינוי ורשימת המודלים יתעדכנו אוטומטית (מוצפן AES-256 GCM)",
+                                        "As soon as you paste a key, the provider, nickname & model list update automatically"
+                                    ),
+                                    fontSize = 11.sp
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("api_key_input")
+                    )
+
+                    // Automatic Live Model Loading Status Banner (No manual scan button needed)
+                    AnimatedVisibility(visible = isFetchingModels || fetchStatusMessage != null) {
+                        Surface(
+                            color = when {
+                                isFetchingModels -> MaterialTheme.colorScheme.surfaceVariant
+                                fetchStatusIsError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                                fetchSuccessCount != null -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                                else -> MaterialTheme.colorScheme.surfaceContainer
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isFetchingModels) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = when {
+                                            fetchStatusIsError -> Icons.Default.Warning
+                                            fetchSuccessCount != null -> Icons.Default.CheckCircle
+                                            else -> Icons.Default.CloudSync
+                                        },
+                                        contentDescription = null,
+                                        tint = when {
+                                            fetchStatusIsError -> MaterialTheme.colorScheme.error
+                                            fetchSuccessCount != null -> MaterialTheme.colorScheme.primary
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = fetchStatusMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (fetchSuccessCount != null) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (fetchStatusIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
 
-                    // 1. Provider Selection (Auto-detected + Manual Override)
+                    AnimatedVisibility(visible = autoDetectedProviderBadge != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = AppStrings.tr(
+                                            "המערכת זיהתה ושייכה אוטומטית לפי טקסט המפתח: ${autoDetectedProviderBadge?.displayName.orEmpty()} (ניתן לשנות ידנית למטה)",
+                                            "Auto-detected from key text: ${autoDetectedProviderBadge?.displayName.orEmpty()} (can be changed manually below)"
+                                        ),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { providerMenuDialogOpen = true },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(26.dp)
+                                ) {
+                                    Text(AppStrings.tr("שנה ידנית", "Change"), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Provider Selection (Auto-detected + Manual Override)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -446,8 +629,8 @@ fun AddKeyDialog(
                     ) {
                         Text(
                             text = AppStrings.tr(
-                                "1. ספק AI / שירות (מזוהה אוטומטית או בחירה ידנית):",
-                                "1. AI Provider / Service (Auto-detected or manual choice):"
+                                "2. ספק AI / שירות (מזוהה אוטומטית או בחירה ידנית):",
+                                "2. AI Provider / Service (Auto-detected or manual choice):"
                             ),
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
@@ -526,49 +709,6 @@ fun AddKeyDialog(
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary
                                 )
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(visible = autoDetectedProviderBadge != null) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.AutoAwesome,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = AppStrings.tr(
-                                            "המערכת זיהתה ושייכה אוטומטית לפי טקסט המפתח: ${autoDetectedProviderBadge?.displayName.orEmpty()} (ניתן לשנות ידנית למעלה)",
-                                            "Auto-detected from key text: ${autoDetectedProviderBadge?.displayName.orEmpty()} (can be changed manually above)"
-                                        ),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                TextButton(
-                                    onClick = { providerMenuDialogOpen = true },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(26.dp)
-                                ) {
-                                    Text(AppStrings.tr("שנה ידנית", "Change"), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
                             }
                         }
                     }
@@ -676,7 +816,7 @@ fun AddKeyDialog(
                             name = it
                             userEditedNameManually = true
                         },
-                        label = { Text(AppStrings.tr("כינוי למפתח", "Key Nickname")) },
+                        label = { Text(AppStrings.tr("כינוי למפתח (מתעדכן אוטומטית לפי הספק)", "Key Nickname (Auto-updates by provider)")) },
                         placeholder = { Text(AppStrings.tr("למשל: Groq ראשי או Gemini לתמונות", "e.g., Main Groq or Gemini Vision")) },
                         singleLine = true,
                         modifier = Modifier
@@ -684,182 +824,14 @@ fun AddKeyDialog(
                             .testTag("key_name_input")
                     )
 
-                    // API Key input - AUTO-DETECTS PROVIDER & PERMANENTLY MASKED
-                    OutlinedTextField(
-                        value = apiKeyText,
-                        onValueChange = { newText ->
-                            val trimmed = newText.trim()
-                            apiKeyText = trimmed
-                            errorMessage = null
-
-                            val detected = ProviderType.detectProviderFromKey(trimmed, name)
-                            if (detected != null) {
-                                applyProviderChange(detected, isAutoDetected = true)
-                            }
-                        },
-                        label = {
-                            Text(
-                                if (existingKey == null) {
-                                    AppStrings.tr("מפתח API (מזהה ספק אוטומטית לפי הטקסט)", "API Key (Auto-detects provider from text)")
-                                } else {
-                                    AppStrings.tr("מפתח API (שמור ומוצפן בחומרה 🔒)", "API Key (Hardware Encrypted 🔒)")
-                                }
-                            )
-                        },
-                        placeholder = {
-                            Text(
-                                if (existingKey == null) selectedProvider.keyHint
-                                else AppStrings.tr(
-                                    "•••••••••••••••••••• (שמור - הזן חדש לדריסה בלבד)",
-                                    "•••••••••••••••••••• (Saved - enter new key to overwrite)"
-                                )
-                            )
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        trailingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = AppStrings.tr("המפתח חסוי ומוצפן תמיד", "Key is always masked and encrypted"),
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        singleLine = true,
-                        isError = errorMessage != null,
-                        supportingText = {
-                            if (errorMessage != null) {
-                                Text(errorMessage!!, color = MaterialTheme.colorScheme.error)
-                            } else if (existingKey != null) {
-                                Text(
-                                    AppStrings.tr(
-                                        "המפתח שמור ומוצפן. השאר ריק לשמירתו, או הקלד מפתח חדש לדריסה.",
-                                        "Key is saved & encrypted. Leave blank to keep it, or type a new key to overwrite."
-                                    ),
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                            } else {
-                                Text(
-                                    AppStrings.tr(
-                                        "הדבק מפתח מכל ספק — הספק יזוהה אוטומטית (ותמיד ניתן לשנותו ידנית למעלה)",
-                                        "Paste a key from any provider — provider is auto-detected (and can be changed manually above)"
-                                    ),
-                                    fontSize = 11.sp
-                                )
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("api_key_input")
-                    )
-
-                    // Live Fetch Action Button & Dynamic Banner
-                    Surface(
-                        color = when {
-                            isFetchingModels -> MaterialTheme.colorScheme.surfaceVariant
-                            fetchStatusIsError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                            fetchSuccessCount != null -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                            else -> MaterialTheme.colorScheme.surfaceContainer
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(
-                                        imageVector = when {
-                                            isFetchingModels -> Icons.Default.CloudSync
-                                            fetchStatusIsError -> Icons.Default.Warning
-                                            fetchSuccessCount != null -> Icons.Default.CheckCircle
-                                            else -> Icons.Default.Refresh
-                                        },
-                                        contentDescription = null,
-                                        tint = when {
-                                            fetchStatusIsError -> MaterialTheme.colorScheme.error
-                                            fetchSuccessCount != null -> MaterialTheme.colorScheme.primary
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = fetchStatusMessage ?: AppStrings.tr(
-                                            "לחץ לבדיקת המפתח וטעינת כל המודלים (ללא הגבלת כמות, חינמיים תחילה)",
-                                            "Tap to verify key and load all models (unlimited, free models first)"
-                                        ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = if (fetchSuccessCount != null) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (fetchStatusIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-
-                                Button(
-                                    onClick = {
-                                        if (apiKeyText.isBlank() && existingKey == null) {
-                                            errorMessage = AppStrings.tr(
-                                                "הזן תחילה מפתח API כדי לשלוף מודלים מהשרת",
-                                                "Enter an API key first to fetch models from server"
-                                            )
-                                            return@Button
-                                        }
-                                        if (apiKeyText.isNotBlank()) {
-                                            triggerLiveFetch(selectedProvider, apiKeyText)
-                                        } else if (existingKey != null && onFetchDetailedModelsForExistingKey != null) {
-                                            scope.launch {
-                                                isFetchingModels = true
-                                                val res = onFetchDetailedModelsForExistingKey(existingKey.id)
-                                                isFetchingModels = false
-                                                if (res.models.isNotEmpty()) {
-                                                    val sorted = AiModelInfo.sortBestFirst(res.models)
-                                                    modelsList = sorted
-                                                    fetchSuccessCount = sorted.size
-                                                    val freeCount = sorted.count { it.effectivelyFree }
-                                                    fetchStatusMessage = AppStrings.tr(
-                                                        "נטענו כל ${sorted.size} המודלים ($freeCount חינמיים בראש הרשימה)!",
-                                                        "Loaded all ${sorted.size} models ($freeCount free models first)!"
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    },
-                                    enabled = !isFetchingModels,
-                                    modifier = Modifier.height(34.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.primary
-                                    )
-                                ) {
-                                    if (isFetchingModels) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(14.dp),
-                                            strokeWidth = 2.dp,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    } else {
-                                        Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(AppStrings.tr("שלוף הכל", "Fetch All"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Model Selection Section (Free First + Best Quality)
+                    // 3. Model Selection Section (Free First + Best Quality)
                     val currentModelId = customModelInput.ifBlank { selectedModel.ifBlank { selectedProvider.defaultModel } }
                     val currentModelInfo = modelsList.find { it.id == currentModelId } ?: AiModelInfo(id = currentModelId)
 
                     Text(
                         text = AppStrings.tr(
-                            "2. מודל ראשי במפתח זה (החינמיים והטובים ביותר בראש הרשימה):",
-                            "2. Primary Model for this Key (Free & Best Models First):"
+                            "3. מודל ראשי במפתח זה (נטען אוטומטית • החינמיים והטובים בראש הרשימה):",
+                            "3. Primary Model for this Key (Auto-loaded • Free & Best Models First):"
                         ),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold

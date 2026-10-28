@@ -79,8 +79,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.example.data.model.AiModelInfo
 import com.example.data.model.AiTaskType
 import com.example.data.model.ApiKeyEntity
+import com.example.data.model.CustomApiProtocol
 import com.example.data.model.ProviderType
 import com.example.data.repository.AiRepository
 import com.example.ui.components.CenteredMenuOption
@@ -92,6 +102,7 @@ import com.example.ui.viewmodel.NotifAiViewModel
 import com.example.util.AppStrings
 import com.example.util.ParsedImportKeyItem
 import com.example.util.SmartKeyImporter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -106,12 +117,83 @@ fun ApiKeysScreen(
 
     var showAddKeyDialog by remember { mutableStateOf(false) }
     var keyToEdit by remember { mutableStateOf<ApiKeyEntity?>(null) }
+    var dialogInitialRawKey by remember { mutableStateOf("") }
     var showTaskRoutingSection by remember { mutableStateOf(false) }
     var routingRefreshTick by remember { mutableStateOf(0) }
     var showDeleteAllConfirmDialog by remember { mutableStateOf(false) }
     var showBulkKeysDialog by remember { mutableStateOf(false) }
 
     val sortedKeys = remember(apiKeys) { apiKeys.sortedBy { it.priority } }
+    val nextPriority = remember(sortedKeys) { (sortedKeys.maxOfOrNull { it.priority } ?: 0) + 1 }
+
+    // Top-of-page Instant API Key Entry State (Auto-detects provider & loads models automatically)
+    var topQuickKeyText by remember { mutableStateOf("") }
+    var topDetectedProvider by remember { mutableStateOf(ProviderType.GROQ) }
+    var topWasProviderAutoDetected by remember { mutableStateOf(false) }
+    var topProviderMenuOpen by remember { mutableStateOf(false) }
+    var topSelectedModel by remember { mutableStateOf(ProviderType.GROQ.defaultModel) }
+    var topFetchedModels by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
+    var topIsFetchingModels by remember { mutableStateOf(false) }
+    var topFetchStatusText by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(topQuickKeyText, topDetectedProvider) {
+        val trimmed = topQuickKeyText.trim()
+        if (trimmed.length >= 8) {
+            delay(350)
+            topIsFetchingModels = true
+            topFetchStatusText = AppStrings.tr(
+                "טוען אוטומטית את כל המודלים משרתי ${topDetectedProvider.displayName}...",
+                "Automatically loading all models from ${topDetectedProvider.displayName}..."
+            )
+            val res = viewModel.fetchDetailedModels(topDetectedProvider, trimmed)
+            topIsFetchingModels = false
+            if (res.isSuccess && res.models.isNotEmpty()) {
+                val sorted = AiModelInfo.sortBestFirst(res.models)
+                topFetchedModels = sorted
+                val bestModel = sorted.first().id
+                topSelectedModel = bestModel
+                val freeCount = sorted.count { it.effectivelyFree }
+                topFetchStatusText = AppStrings.tr(
+                    "נטענו אוטומטית ${sorted.size} מודלים ($freeCount חינמיים בראש הרשימה 🟢) • נבחר: $bestModel",
+                    "Auto-loaded ${sorted.size} models ($freeCount free first 🟢) • Selected: $bestModel"
+                )
+            } else {
+                topFetchStatusText = null
+            }
+        } else {
+            topIsFetchingModels = false
+            topFetchStatusText = null
+            topFetchedModels = emptyList()
+        }
+    }
+
+    if (topProviderMenuOpen) {
+        val providerOptions = remember {
+            ProviderType.entries.map { provider ->
+                CenteredMenuOption(
+                    value = provider,
+                    title = provider.displayName,
+                    subtitle = "${provider.keyHint} • ${provider.documentationUrl}",
+                    badge = provider.defaultModel.substringAfterLast("/").take(16)
+                )
+            }
+        }
+        CenteredSelectionMenuDialog(
+            title = AppStrings.tr("בחירת ספק AI למפתח", "Select AI Provider"),
+            subtitle = AppStrings.tr(
+                "המערכת מזהה אוטומטית לפי המפתח, ותמיד ניתן לשנות כאן ידנית",
+                "Auto-detected from key text, and can always be changed manually here"
+            ),
+            options = providerOptions,
+            selectedValue = topDetectedProvider,
+            onSelect = { chosen ->
+                topDetectedProvider = chosen
+                topSelectedModel = chosen.defaultModel
+                topWasProviderAutoDetected = false
+            },
+            onDismiss = { topProviderMenuOpen = false }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -119,7 +201,298 @@ fun ApiKeysScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
-        // Top header with Add button
+        // 1. VERY TOP OF KEYS PAGE: Instant API Key Input Row (Auto-detects Provider & Models Immediately)
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = AppStrings.tr(
+                            "🔑 הזנת מפתח API מהירה (מזהה ספק וטוען מודלים אוטומטית):",
+                            "🔑 Quick API Key Entry (Auto-detects provider & models):"
+                        ),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = topQuickKeyText,
+                    onValueChange = { newText ->
+                        val trimmed = newText.trim()
+                        topQuickKeyText = trimmed
+                        val detected = ProviderType.detectProviderFromKey(trimmed)
+                        if (detected != null) {
+                            topDetectedProvider = detected
+                            topSelectedModel = detected.defaultModel
+                            topWasProviderAutoDetected = true
+                        }
+                    },
+                    label = {
+                        Text(
+                            AppStrings.tr(
+                                "הדבק או הקלד מפתח API כאן — יתעדכן אוטומטית מיד",
+                                "Paste or type API key here — updates automatically"
+                            ),
+                            fontSize = 12.sp
+                        )
+                    },
+                    placeholder = {
+                        Text("gsk_... / sk-or-v1-... / AIzaSy... / sk-...", fontSize = 12.sp)
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    trailingIcon = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.padding(end = 4.dp)
+                        ) {
+                            if (topQuickKeyText.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        topQuickKeyText = ""
+                                        topWasProviderAutoDetected = false
+                                        topFetchStatusText = null
+                                    },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = AppStrings.tr("נקה", "Clear"),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val pasted = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                                    if (pasted.isNotBlank()) {
+                                        topQuickKeyText = pasted
+                                        val detected = ProviderType.detectProviderFromKey(pasted)
+                                        if (detected != null) {
+                                            topDetectedProvider = detected
+                                            topSelectedModel = detected.defaultModel
+                                            topWasProviderAutoDetected = true
+                                        }
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            AppStrings.tr("הלוח ריק", "Clipboard is empty"),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentPaste,
+                                    contentDescription = AppStrings.tr("הדבק מהלוח", "Paste from clipboard"),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("top_quick_api_key_input")
+                )
+
+                // Live Auto-Updated Bar as soon as key text is entered
+                AnimatedVisibility(visible = topQuickKeyText.isNotBlank()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.AutoFixHigh,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = if (topWasProviderAutoDetected) {
+                                                AppStrings.tr(
+                                                    "זוהה אוטומטית: ${topDetectedProvider.displayName}",
+                                                    "Auto-detected: ${topDetectedProvider.displayName}"
+                                                )
+                                            } else {
+                                                AppStrings.tr(
+                                                    "ספק נבחר: ${topDetectedProvider.displayName}",
+                                                    "Selected provider: ${topDetectedProvider.displayName}"
+                                                )
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = { topProviderMenuOpen = true },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                        modifier = Modifier.height(26.dp)
+                                    ) {
+                                        Text(
+                                            text = AppStrings.tr("שנה ספק ▾", "Change Provider ▾"),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                if (topIsFetchingModels || topFetchStatusText != null) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (topIsFetchingModels) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                strokeWidth = 2.dp,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = topFetchStatusText.orEmpty(),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Button(
+                                onClick = {
+                                    val cleanKey = topQuickKeyText.trim()
+                                    if (cleanKey.isNotBlank()) {
+                                        val autoName = "${topDetectedProvider.displayName.substringBefore(" ")} #$nextPriority"
+                                        viewModel.addOrUpdateApiKey(
+                                            id = null,
+                                            provider = topDetectedProvider,
+                                            name = autoName,
+                                            rawKey = cleanKey,
+                                            model = topSelectedModel.ifBlank { topDetectedProvider.defaultModel },
+                                            priority = nextPriority,
+                                            temperature = 0.7f,
+                                            maxTokens = 4096,
+                                            systemPrompt = null,
+                                            supportedTasks = AiTaskType.toCsv(
+                                                setOf(AiTaskType.TEXT, AiTaskType.IMAGE_INPUT, AiTaskType.FILE_INPUT)
+                                            ),
+                                            fallbackModels = "",
+                                            customBaseUrl = null,
+                                            customProtocol = CustomApiProtocol.OPENAI.name
+                                        )
+                                        topQuickKeyText = ""
+                                        topWasProviderAutoDetected = false
+                                        topFetchStatusText = null
+                                        Toast.makeText(
+                                            context,
+                                            AppStrings.tr(
+                                                "המפתח נוסף בהצלחה (${topDetectedProvider.displayName} • $topSelectedModel)! 🔐",
+                                                "Key added (${topDetectedProvider.displayName} • $topSelectedModel)! 🔐"
+                                            ),
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("top_quick_save_key_btn"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = AppStrings.tr("שמור מפתח מיד", "Save Key Now"),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    keyToEdit = null
+                                    dialogInitialRawKey = topQuickKeyText.trim()
+                                    showAddKeyDialog = true
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = AppStrings.tr("בחירת מודלים והגדרות", "Models & Settings"),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sub-header with Add / Configure button
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -145,19 +518,18 @@ fun ApiKeysScreen(
 
             Spacer(modifier = Modifier.width(8.dp))
 
-            Button(
+            OutlinedButton(
                 onClick = {
                     keyToEdit = null
+                    dialogInitialRawKey = topQuickKeyText.trim()
                     showAddKeyDialog = true
                 },
                 modifier = Modifier.testTag("add_key_fab_btn"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(AppStrings.tr("הוסף מפתח", "Add Key"), fontWeight = FontWeight.Bold)
+                Text(AppStrings.tr("הגדרות מפתח מלאות", "Full Key Dialog"), fontWeight = FontWeight.Bold, fontSize = 11.sp)
             }
         }
 
@@ -455,7 +827,8 @@ fun ApiKeysScreen(
     if (showAddKeyDialog) {
         AddKeyDialog(
             existingKey = keyToEdit,
-            nextPriority = (sortedKeys.maxOfOrNull { it.priority } ?: 0) + 1,
+            nextPriority = nextPriority,
+            initialRawKey = if (keyToEdit == null) dialogInitialRawKey else "",
             onFetchDetailedModels = { provider, rawKey ->
                 viewModel.fetchDetailedModels(provider, rawKey)
             },
@@ -465,6 +838,7 @@ fun ApiKeysScreen(
             onDismiss = {
                 showAddKeyDialog = false
                 keyToEdit = null
+                dialogInitialRawKey = ""
             },
             onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol ->
                 viewModel.addOrUpdateApiKey(
@@ -482,8 +856,14 @@ fun ApiKeysScreen(
                     customBaseUrl = customBaseUrl,
                     customProtocol = customProtocol
                 )
+                if (keyToEdit == null && dialogInitialRawKey.isNotBlank()) {
+                    topQuickKeyText = ""
+                    topWasProviderAutoDetected = false
+                    topFetchStatusText = null
+                }
                 showAddKeyDialog = false
                 keyToEdit = null
+                dialogInitialRawKey = ""
             }
         )
     }
