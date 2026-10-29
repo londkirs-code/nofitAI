@@ -5,7 +5,12 @@ import com.example.data.model.AiModelInfo
 import com.example.data.model.CustomApiProtocol
 import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
+import com.example.util.PollinationsAspectRatio
+import com.example.util.PollinationsImageManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -14,7 +19,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 sealed class AiCallException(message: String) : Exception(message) {
     class SmartApiException(
@@ -35,7 +42,8 @@ data class AiResponse(
     val tokensUsed: Int = 0,
     val generatedMediaBytes: ByteArray? = null,
     val generatedMediaMimeType: String? = null,
-    val generatedMediaName: String? = null
+    val generatedMediaName: String? = null,
+    val generatedMediaBytesList: List<ByteArray> = emptyList()
 )
 
 data class AttachmentData(
@@ -70,8 +78,21 @@ class AiApiClient {
         maxTokens: Int = 8192,
         attachment: AttachmentData? = null,
         customBaseUrl: String? = null,
-        customProtocol: String = "OPENAI"
+        customProtocol: String = "OPENAI",
+        aspectRatio: PollinationsAspectRatio = PollinationsAspectRatio.RATIO_1_1,
+        imageCount: Int = 1,
+        googleTranslationKey: String = ""
     ): AiResponse = withContext(Dispatchers.IO) {
+        if (provider == ProviderType.POLLINATIONS) {
+            return@withContext callPollinationsImageGeneration(
+                model = model.ifBlank { "flux" },
+                prompt = prompt,
+                googleKey = googleTranslationKey.ifBlank { apiKey },
+                aspectRatio = aspectRatio,
+                imageCount = imageCount.coerceIn(1, 4)
+            )
+        }
+
         // Check if OpenAI DALL-E or TTS endpoint is appropriate
         val lowerModel = model.lowercase()
         if ((provider == ProviderType.OPENAI || (provider == ProviderType.CUSTOM && customProtocol == "OPENAI")) &&
@@ -86,6 +107,13 @@ class AiApiClient {
         }
 
         when (provider) {
+            ProviderType.POLLINATIONS -> callPollinationsImageGeneration(
+                model = model.ifBlank { "flux" },
+                prompt = prompt,
+                googleKey = googleTranslationKey.ifBlank { apiKey },
+                aspectRatio = aspectRatio,
+                imageCount = imageCount.coerceIn(1, 4)
+            )
             ProviderType.GEMINI -> callGemini(
                 provider = provider,
                 apiKey = apiKey,
@@ -192,6 +220,71 @@ class AiApiClient {
         customBaseUrl: String? = null,
         customProtocol: String = "OPENAI"
     ): FetchModelsResponse = withContext(Dispatchers.IO) {
+        if (provider == ProviderType.POLLINATIONS) {
+            val pollinationsModels = listOf(
+                AiModelInfo(
+                    id = "flux",
+                    displayName = "Flux (ברירת מחדל - איכות גבוהה במיוחד • חינמי)",
+                    isFree = true,
+                    description = "מודל הדגל ליצירת תמונות ב-Pollinations ללא צורך במפתח API",
+                    isRecommended = true,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "flux-realism",
+                    displayName = "Flux Realism (צילום ריאליסטי • חינמי)",
+                    isFree = true,
+                    description = "מותאם לתמונות פוטו-ריאליסטיות, טבע ונופים",
+                    isRecommended = true,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "flux-3d",
+                    displayName = "Flux 3D (הדמיית תלת-מימד • חינמי)",
+                    isFree = true,
+                    description = "מותאם לעיצוב תלת-מימדי ואנימציה",
+                    isRecommended = true,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "flux-anime",
+                    displayName = "Flux Anime (איור ואמנות דיגיטלית • חינמי)",
+                    isFree = true,
+                    description = "מותאם לאיורים אומנותיים וציורים",
+                    isRecommended = false,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "flux-pro",
+                    displayName = "Flux Pro (פירוט מתקדם • חינמי)",
+                    isFree = true,
+                    description = "רמת פירוט גבוהה לקומפוזיציות מורכבות",
+                    isRecommended = false,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "any-dark",
+                    displayName = "Any Dark (תאורה דרמטית וניגודיות • חינמי)",
+                    isFree = true,
+                    description = "מותאם לסצנות לילה ותאורה קולנועית",
+                    isRecommended = false,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                ),
+                AiModelInfo(
+                    id = "turbo",
+                    displayName = "Turbo (יצירה מהירה במיוחד • חינמי)",
+                    isFree = true,
+                    description = "מודל מהיר ליצירת תמונות מיידית",
+                    isRecommended = false,
+                    explicitCapabilities = setOf(com.example.data.model.AiTaskType.IMAGE_GEN)
+                )
+            )
+            return@withContext FetchModelsResponse(
+                isSuccess = true,
+                models = AiModelInfo.sortBestFirst(pollinationsModels)
+            )
+        }
+
         val trimmedKey = apiKey.trim()
         if (trimmedKey.isBlank()) {
             val defaultSorted = AiModelInfo.sortBestFirst(
@@ -213,6 +306,7 @@ class AiApiClient {
 
         try {
             val rawResponse = when (provider) {
+                ProviderType.POLLINATIONS -> fetchAvailableModelsDetailed(ProviderType.POLLINATIONS, "")
                 ProviderType.GEMINI -> fetchGeminiModels(trimmedKey)
                 ProviderType.GROQ -> fetchGroqModels(trimmedKey)
                 ProviderType.OPENROUTER -> fetchOpenRouterModels(trimmedKey)
@@ -694,6 +788,231 @@ class AiApiClient {
         }
     }
 
+    /**
+     * Built-in Pollinations AI image generation (works out-of-the-box without requiring any user API key).
+     * Enforces:
+     * 1. Aspect Ratios: 1:1, 3:4, 4:3, 9:16, 16:9
+     * 2. Quantity: 1 to 4 images per generation
+     * 3. Automatic Hebrew -> English translation when a Google API key is entered (sent directly to Google)
+     * 4. Request Filtering: Politely refuses general questions that are not image descriptions
+     * 5. Strict Modesty Instruction: Never creates female characters (women/girls); allows men, boys, and children up to age 6, otherwise prefers a scene without people
+     */
+    private suspend fun callPollinationsImageGeneration(
+        model: String,
+        prompt: String,
+        googleKey: String,
+        aspectRatio: PollinationsAspectRatio,
+        imageCount: Int
+    ): AiResponse {
+        val cleanUserPrompt = prompt.trim()
+
+        // 1. Pre-check Request Filtering (סינון בקשות) for obvious general questions
+        if (PollinationsImageManager.isGeneralQuestionNotImageDescription(cleanUserPrompt)) {
+            return AiResponse(
+                text = PollinationsImageManager.getPoliteRefusalMessage(),
+                provider = ProviderType.POLLINATIONS,
+                model = model,
+                tokensUsed = 0
+            )
+        }
+
+        val strippedSubject = PollinationsImageManager.stripImageCommandPrefix(cleanUserPrompt)
+        var wasTranslatedByGoogle = false
+        var englishPrompt: String? = null
+
+        // 2. If a Google Gemini key is provided, send directly to Google for:
+        //    - Request Filtering (polite refusal if it's a general question)
+        //    - Automatic Hebrew -> English translation
+        //    - Strict Modesty Instruction enforcement
+        val trimmedGoogleKey = googleKey.trim()
+        if (trimmedGoogleKey.isNotBlank()) {
+            val googleResult = translateAndFilterPromptDirectlyWithGoogle(trimmedGoogleKey, strippedSubject)
+            if (googleResult != null) {
+                if (googleResult.startsWith("REFUSE:", ignoreCase = true)) {
+                    val customRefusal = googleResult.substringAfter(":").trim().ifBlank {
+                        PollinationsImageManager.getPoliteRefusalMessage()
+                    }
+                    return AiResponse(
+                        text = customRefusal,
+                        provider = ProviderType.POLLINATIONS,
+                        model = model,
+                        tokensUsed = 0
+                    )
+                }
+                englishPrompt = googleResult
+                wasTranslatedByGoogle = true
+            }
+        }
+
+        // 3. Fallback translation when no key is entered (built-in keyless mode)
+        val baseEnglishPrompt = englishPrompt?.takeIf { it.isNotBlank() }
+            ?: PollinationsImageManager.fallbackTranslateHebrewToEnglish(strippedSubject)
+
+        // 4. Enforce strict Modesty Instruction (הנחיית צניעות) on every single request
+        val (modestPrompt, modestyTriggered) = PollinationsImageManager.enforceModestyInstruction(baseEnglishPrompt)
+
+        val count = imageCount.coerceIn(1, 4)
+        val effectiveModel = model.ifBlank { "flux" }
+        val baseSeed = Random.nextInt(100000, 8999999)
+
+        // 5. Generate 1 to 4 images in parallel with the requested aspect ratio (1:1, 3:4, 4:3, 9:16, 16:9)
+        val downloadedImages: List<ByteArray> = coroutineScope {
+            (0 until count).map { idx ->
+                async(Dispatchers.IO) {
+                    val seed = baseSeed + idx * 7919
+                    fetchSinglePollinationsImage(
+                        prompt = modestPrompt,
+                        model = effectiveModel,
+                        width = aspectRatio.width,
+                        height = aspectRatio.height,
+                        seed = seed
+                    )
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        if (downloadedImages.isEmpty()) {
+            throw AiCallException.ServerUnavailable(
+                "לא ניתן היה להוריד את התמונה משרת Pollinations כעת. בדוק את חיבור האינטרנט ונסה שוב.",
+                15L
+            )
+        }
+
+        val summaryText = buildString {
+            append("🎨 ")
+            if (downloadedImages.size == 1) {
+                append("התמונה נוצרה בהצלחה ב-Pollinations ($effectiveModel)!")
+            } else {
+                append("נוצרו ${downloadedImages.size} תמונות בהצלחה ב-Pollinations ($effectiveModel)!")
+            }
+            append("\n• יחס תמונה: ${aspectRatio.ratioLabel} (${aspectRatio.width}×${aspectRatio.height})")
+            append("\n• כמות: ${downloadedImages.size} תמונות")
+            if (wasTranslatedByGoogle) {
+                append("\n• תרגום אוטומטי לאנגלית (Google): \"$baseEnglishPrompt\"")
+            }
+            if (modestyTriggered) {
+                append("\n• הוחלה הנחיית צניעות אוטומטית (העדפת סצנה ללא דמויות נשים/בנות)")
+            } else {
+                append("\n• הנחיית צניעות מופעלת ✓")
+            }
+        }
+
+        return AiResponse(
+            text = summaryText,
+            provider = ProviderType.POLLINATIONS,
+            model = effectiveModel,
+            tokensUsed = 0,
+            generatedMediaBytes = downloadedImages.first(),
+            generatedMediaMimeType = "image/jpeg",
+            generatedMediaName = "pollinations_${System.currentTimeMillis()}.jpg",
+            generatedMediaBytesList = downloadedImages
+        )
+    }
+
+    /**
+     * Sends the prompt directly to Google Gemini API (when a key is entered) to:
+     * 1. Refuse general questions that are not an image description ("REFUSE: ...")
+     * 2. Translate Hebrew description to English
+     * 3. Apply the Modesty Instruction (no women/girls; allow men, boys, and children up to age 6, or scene without people)
+     */
+    private fun translateAndFilterPromptDirectlyWithGoogle(googleApiKey: String, userPrompt: String): String? {
+        val candidateModels = listOf("gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash")
+        val sysInstruction = """
+            You are an image-generation prompt filter and translator.
+            Follow these strict rules:
+            1. REQUEST FILTERING: If the user's input is a general question, math problem, coding request, greeting, or conversation that is NOT a description of an image/scene to generate, reply ONLY with:
+            REFUSE: ${PollinationsImageManager.POLITE_REFUSAL_MESSAGE_HE}
+            2. MODESTY RULE (הנחיית צניעות): Never include women, girls, or any female characters/figures in the image prompt. Men, boys, and young children up to age 6 are allowed. In any other case (or if the user mentioned women/girls), convert the scene to have no people at all (nature, architecture, objects, scenery) or only men/boys/young children up to age 6.
+            3. AUTOMATIC TRANSLATION: Translate the user's Hebrew image description into a rich, clear, high-quality English image prompt suitable for Flux/Pollinations.
+            Output ONLY the final English prompt text (or REFUSE: ...), with no extra explanations or quotes.
+        """.trimIndent()
+
+        for (geminiModel in candidateModels) {
+            try {
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent?key=$googleApiKey"
+                val rootJson = JSONObject().apply {
+                    put(
+                        "system_instruction",
+                        JSONObject().put("parts", JSONArray().put(JSONObject().put("text", sysInstruction)))
+                    )
+                    put(
+                        "contents",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("role", "user")
+                                .put("parts", JSONArray().put(JSONObject().put("text", userPrompt)))
+                        )
+                    )
+                    put(
+                        "generationConfig",
+                        JSONObject()
+                            .put("temperature", 0.3)
+                            .put("maxOutputTokens", 300)
+                    )
+                }
+
+                val req = Request.Builder()
+                    .url(url)
+                    .addHeader("x-goog-api-key", googleApiKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(rootJson.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string().orEmpty()
+                        val json = JSONObject(body)
+                        val text = json.optJSONArray("candidates")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("content")
+                            ?.optJSONArray("parts")
+                            ?.optJSONObject(0)
+                            ?.optString("text", "")
+                            ?.trim()
+                            .orEmpty()
+                        if (text.isNotBlank()) {
+                            return text
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Try next candidate Gemini model or fall back to built-in translation
+            }
+        }
+        return null
+    }
+
+    private fun fetchSinglePollinationsImage(
+        prompt: String,
+        model: String,
+        width: Int,
+        height: Int,
+        seed: Int
+    ): ByteArray? {
+        val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+        val primaryUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$height&seed=$seed&model=$model&nologo=true&enhance=false"
+        val fallbackUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$height&seed=$seed&nologo=true"
+
+        for (url in listOf(primaryUrl, fallbackUrl)) {
+            try {
+                val req = Request.Builder()
+                    .url(url)
+                    .addHeader("User-Agent", "NotifAI-Android/1.0")
+                    .get()
+                    .build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val bytes = resp.body?.bytes()
+                        if (bytes != null && bytes.size > 512) {
+                            return bytes
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
     private fun callOpenAiImageGeneration(
         provider: ProviderType,
         apiKey: String,
@@ -701,11 +1020,20 @@ class AiApiClient {
         prompt: String,
         customBaseUrl: String?
     ): AiResponse {
+        if (PollinationsImageManager.isGeneralQuestionNotImageDescription(prompt)) {
+            return AiResponse(
+                text = PollinationsImageManager.getPoliteRefusalMessage(),
+                provider = provider,
+                model = model,
+                tokensUsed = 0
+            )
+        }
+        val (modestPrompt, _) = PollinationsImageManager.enforceModestyInstruction(prompt)
         val base = customBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: "https://api.openai.com/v1"
         val url = if (base.endsWith("/images/generations")) base else "${base.removeSuffix("/chat/completions")}/images/generations"
         val rootJson = JSONObject().apply {
             put("model", model)
-            put("prompt", prompt)
+            put("prompt", modestPrompt)
             put("n", 1)
             put("size", "1024x1024")
             put("response_format", "b64_json")

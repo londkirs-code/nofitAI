@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.data.local.AppDatabase
 import com.example.data.repository.AiRepository
 import com.example.data.security.CryptoEngine
+import kotlinx.coroutines.launch
 
 class NotifAiApplication : Application() {
 
@@ -34,6 +35,11 @@ class NotifAiApplication : Application() {
                 chatDao = database.chatDao(),
                 context = this
             )
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                try {
+                    aiRepository.ensureBuiltInPollinationsKey()
+                } catch (_: Exception) {}
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

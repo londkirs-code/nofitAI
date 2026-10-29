@@ -72,7 +72,12 @@ fun MessageAttachmentView(
     if (attachmentUri.isNullOrBlank()) return
 
     val context = LocalContext.current
-    val lowerUri = attachmentUri.lowercase()
+    val imageUris = remember(attachmentUri) {
+        attachmentUri.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+    val primaryUri = imageUris.firstOrNull() ?: attachmentUri
+
+    val lowerUri = primaryUri.lowercase()
     val isImage = attachmentMimeType?.startsWith("image/") == true ||
         lowerUri.endsWith(".jpg") || lowerUri.endsWith(".jpeg") ||
         lowerUri.endsWith(".png") || lowerUri.endsWith(".webp") || lowerUri.endsWith(".gif")
@@ -84,7 +89,7 @@ fun MessageAttachmentView(
 
     var isPlayingAudio by remember { mutableStateOf(false) }
     var isPlayingVideoInline by remember { mutableStateOf(false) }
-    var showFullScreenImage by remember { mutableStateOf(false) }
+    var enlargedImageIndex by remember { mutableStateOf<Int?>(null) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
     DisposableEffect(attachmentUri) {
@@ -97,27 +102,27 @@ fun MessageAttachmentView(
         }
     }
 
-    val modelData: Any = remember(attachmentUri) {
-        if (attachmentUri.startsWith("/")) {
-            File(attachmentUri)
+    val resolveModelData: (String) -> Any = { uriStr ->
+        if (uriStr.startsWith("/")) {
+            File(uriStr)
         } else {
-            Uri.parse(attachmentUri)
+            Uri.parse(uriStr)
         }
     }
 
-    val triggerDownload = { defaultMime: String, defaultName: String ->
+    val triggerSingleDownload: (String, String, String) -> Unit = { targetUriStr, defaultMime, defaultName ->
         val savedName = MediaStorageManager.saveFileToPublicDownloads(
             context = context,
-            pathOrUriStr = attachmentUri,
+            pathOrUriStr = targetUriStr,
             mimeType = attachmentMimeType ?: defaultMime,
-            suggestedFileName = attachmentName ?: defaultName
+            suggestedFileName = defaultName
         )
         if (savedName != null) {
             Toast.makeText(
                 context,
                 AppStrings.tr(
-                    "הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): $savedName 📥",
-                    "File downloaded to Downloads/NotifAI: $savedName 📥"
+                    "התמונה/הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): $savedName 📥",
+                    "Downloaded to Downloads/NotifAI: $savedName 📥"
                 ),
                 Toast.LENGTH_LONG
             ).show()
@@ -130,9 +135,15 @@ fun MessageAttachmentView(
         }
     }
 
-    if (showFullScreenImage && isImage) {
+    val triggerDownload = { defaultMime: String, defaultName: String ->
+        triggerSingleDownload(primaryUri, defaultMime, attachmentName ?: defaultName)
+    }
+
+    val activeEnlargedIndex = enlargedImageIndex
+    if (activeEnlargedIndex != null && isImage && activeEnlargedIndex in imageUris.indices) {
+        val currentImageUri = imageUris[activeEnlargedIndex]
         AlertDialog(
-            onDismissRequest = { showFullScreenImage = false },
+            onDismissRequest = { enlargedImageIndex = null },
             properties = DialogProperties(usePlatformDefaultWidth = false),
             modifier = Modifier
                 .fillMaxWidth(0.96f)
@@ -145,11 +156,18 @@ fun MessageAttachmentView(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = attachmentName ?: AppStrings.tr("תצוגת תמונה מלאה", "Full Image View"),
+                        text = if (imageUris.size > 1) {
+                            AppStrings.tr(
+                                "גלריית תמונות (${activeEnlargedIndex + 1} מתוך ${imageUris.size})",
+                                "Image Gallery (${activeEnlargedIndex + 1} of ${imageUris.size})"
+                            )
+                        } else {
+                            attachmentName ?: AppStrings.tr("תצוגת תמונה מלאה", "Full Image View")
+                        },
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    IconButton(onClick = { showFullScreenImage = false }) {
+                    IconButton(onClick = { enlargedImageIndex = null }) {
                         Icon(Icons.Default.Close, contentDescription = AppStrings.tr("סגור", "Close"))
                     }
                 }
@@ -161,27 +179,66 @@ fun MessageAttachmentView(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     AsyncImage(
-                        model = modelData,
-                        contentDescription = attachmentName ?: AppStrings.tr("תמונה", "Image"),
+                        model = resolveModelData(currentImageUri),
+                        contentDescription = AppStrings.tr("תמונה ${activeEnlargedIndex + 1}", "Image ${activeEnlargedIndex + 1}"),
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 200.dp, max = 480.dp)
+                            .heightIn(min = 220.dp, max = 480.dp)
                             .clip(RoundedCornerShape(16.dp))
                     )
+                    if (imageUris.size > 1) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    enlargedImageIndex = if (activeEnlargedIndex > 0) activeEnlargedIndex - 1 else imageUris.lastIndex
+                                }
+                            ) {
+                                Text(AppStrings.tr("▶ הקודמת", "◀ Previous"))
+                            }
+                            Text(
+                                text = "${activeEnlargedIndex + 1} / ${imageUris.size}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            FilledTonalButton(
+                                onClick = {
+                                    enlargedImageIndex = if (activeEnlargedIndex < imageUris.lastIndex) activeEnlargedIndex + 1 else 0
+                                }
+                            ) {
+                                Text(AppStrings.tr("הבאה ◀", "Next ▶"))
+                            }
+                        }
+                    }
                 }
             },
             confirmButton = {
                 FilledTonalButton(
-                    onClick = { triggerDownload("image/png", "notifai_image.png") }
+                    onClick = {
+                        triggerSingleDownload(
+                            currentImageUri,
+                            "image/jpeg",
+                            "pollinations_image_${System.currentTimeMillis()}_${activeEnlargedIndex + 1}.jpg"
+                        )
+                    }
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(AppStrings.tr("הורד למכשיר", "Download to Device"))
+                    Text(
+                        if (imageUris.size > 1) {
+                            AppStrings.tr("הורד תמונה זו (#${activeEnlargedIndex + 1})", "Download Image #${activeEnlargedIndex + 1}")
+                        } else {
+                            AppStrings.tr("הורד למכשיר", "Download to Device")
+                        }
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showFullScreenImage = false }) {
+                TextButton(onClick = { enlargedImageIndex = null }) {
                     Text(AppStrings.tr("סגור", "Close"))
                 }
             }
@@ -191,37 +248,44 @@ fun MessageAttachmentView(
     Column(modifier = modifier.padding(bottom = 8.dp)) {
         when {
             isImage -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 240.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .border(
-                            width = 1.dp,
-                            color = if (isUserBubble) Color.White.copy(alpha = 0.3f)
-                            else MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(12.dp)
-                        )
-                        .clickable { showFullScreenImage = true }
-                ) {
-                    AsyncImage(
-                        model = modelData,
-                        contentDescription = attachmentName ?: AppStrings.tr("תמונה מצורפת", "Attached image"),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
+                if (imageUris.size > 1) {
+                    // Multi-image Gallery Header (2 to 4 images)
                     Row(
                         modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            .fillMaxWidth()
+                            .padding(bottom = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(
+                            text = AppStrings.tr(
+                                "🖼️ גלריית תמונות (${imageUris.size} תמונות) • לחץ להגדלה או הורדה:",
+                                "🖼️ Image Gallery (${imageUris.size} images) • Tap to enlarge or download:"
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isUserBubble) Color.White else MaterialTheme.colorScheme.primary
+                        )
                         Surface(
-                            color = Color.Black.copy(alpha = 0.68f),
+                            color = MaterialTheme.colorScheme.primaryContainer,
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.clickable {
-                                triggerDownload("image/png", "notifai_image.png")
+                                imageUris.forEachIndexed { idx, u ->
+                                    MediaStorageManager.saveFileToPublicDownloads(
+                                        context = context,
+                                        pathOrUriStr = u,
+                                        mimeType = attachmentMimeType ?: "image/jpeg",
+                                        suggestedFileName = "pollinations_batch_${System.currentTimeMillis()}_${idx + 1}.jpg"
+                                    )
+                                }
+                                Toast.makeText(
+                                    context,
+                                    AppStrings.tr(
+                                        "כל ${imageUris.size} התמונות הורדו לתיקיית ההורדות! 📥",
+                                        "All ${imageUris.size} images downloaded! 📥"
+                                    ),
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                         ) {
                             Row(
@@ -230,42 +294,215 @@ fun MessageAttachmentView(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Download,
-                                    contentDescription = AppStrings.tr("הורד תמונה", "Download image"),
-                                    tint = Color.White,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = AppStrings.tr("הורד", "Download"),
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
+                                    text = AppStrings.tr("הורד הכל (${imageUris.size})", "Download All (${imageUris.size})"),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
+                    }
 
-                        Surface(
-                            color = Color.Black.copy(alpha = 0.68f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.clickable { showFullScreenImage = true }
-                        ) {
+                    // 2x2 Gallery Grid for 2-4 images
+                    val rows = imageUris.chunked(2)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        rows.forEachIndexed { rowIdx, rowItems ->
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.OpenInNew,
-                                    contentDescription = AppStrings.tr("הגדל תמונה", "Enlarge image"),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = AppStrings.tr("הגדל תמונה", "Enlarge"),
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                rowItems.forEachIndexed { colIdx, singleUri ->
+                                    val globalIdx = rowIdx * 2 + colIdx
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(145.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (isUserBubble) Color.White.copy(alpha = 0.3f)
+                                                else MaterialTheme.colorScheme.outlineVariant,
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            .clickable { enlargedImageIndex = globalIdx }
+                                    ) {
+                                        AsyncImage(
+                                            model = resolveModelData(singleUri),
+                                            contentDescription = AppStrings.tr("תמונה ${globalIdx + 1}", "Image ${globalIdx + 1}"),
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+
+                                        // Image index badge on top-start
+                                        Surface(
+                                            color = Color.Black.copy(alpha = 0.65f),
+                                            shape = RoundedCornerShape(6.dp),
+                                            modifier = Modifier
+                                                .align(Alignment.TopStart)
+                                                .padding(5.dp)
+                                        ) {
+                                            Text(
+                                                text = "#${globalIdx + 1}",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        // Individual Enlarge & Download buttons on each image
+                                        Row(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(5.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Surface(
+                                                color = Color.Black.copy(alpha = 0.72f),
+                                                shape = RoundedCornerShape(7.dp),
+                                                modifier = Modifier.clickable {
+                                                    triggerSingleDownload(
+                                                        singleUri,
+                                                        "image/jpeg",
+                                                        "pollinations_image_${System.currentTimeMillis()}_${globalIdx + 1}.jpg"
+                                                    )
+                                                }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Download,
+                                                        contentDescription = AppStrings.tr("הורד תמונה", "Download image"),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(11.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text(
+                                                        text = AppStrings.tr("הורד", "Save"),
+                                                        color = Color.White,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            Surface(
+                                                color = Color.Black.copy(alpha = 0.72f),
+                                                shape = RoundedCornerShape(7.dp),
+                                                modifier = Modifier.clickable { enlargedImageIndex = globalIdx }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.OpenInNew,
+                                                        contentDescription = AppStrings.tr("הגדל תמונה", "Enlarge image"),
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(11.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(3.dp))
+                                                    Text(
+                                                        text = AppStrings.tr("הגדל", "Zoom"),
+                                                        color = Color.White,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Single Image View
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 240.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .border(
+                                width = 1.dp,
+                                color = if (isUserBubble) Color.White.copy(alpha = 0.3f)
+                                else MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clickable { enlargedImageIndex = 0 }
+                    ) {
+                        AsyncImage(
+                            model = resolveModelData(primaryUri),
+                            contentDescription = attachmentName ?: AppStrings.tr("תמונה מצורפת", "Attached image"),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.68f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable {
+                                    triggerSingleDownload(primaryUri, "image/png", attachmentName ?: "notifai_image.png")
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = AppStrings.tr("הורד תמונה", "Download image"),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = AppStrings.tr("הורד", "Download"),
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                color = Color.Black.copy(alpha = 0.68f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.clickable { enlargedImageIndex = 0 }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.OpenInNew,
+                                        contentDescription = AppStrings.tr("הגדל תמונה", "Enlarge image"),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = AppStrings.tr("הגדל תמונה", "Enlarge"),
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
                     }

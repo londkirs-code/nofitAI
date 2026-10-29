@@ -98,6 +98,14 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         _isServiceActive.value = NotificationChatService.isRunning || shouldBeRunning
     }
 
+    init {
+        viewModelScope.launch {
+            try {
+                repository.ensureBuiltInPollinationsKey()
+            } catch (_: Exception) {}
+        }
+    }
+
     fun addOrUpdateApiKey(
         id: String? = null,
         provider: ProviderType,
@@ -111,7 +119,8 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         supportedTasks: String = AiTaskType.DEFAULT_TASKS_CSV,
         fallbackModels: String = "",
         customBaseUrl: String? = null,
-        customProtocol: String = "OPENAI"
+        customProtocol: String = "OPENAI",
+        rememberOnDevice: Boolean = true
     ) {
         viewModelScope.launch {
             repository.saveApiKey(
@@ -127,9 +136,15 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
                 supportedTasks = supportedTasks,
                 fallbackModels = fallbackModels,
                 customBaseUrl = customBaseUrl,
-                customProtocol = customProtocol
+                customProtocol = customProtocol,
+                rememberOnDevice = rememberOnDevice
             )
-            Toast.makeText(getApplication(), "המפתח נשמר והוצפן בחומרה בהצלחה! 🔒", Toast.LENGTH_SHORT).show()
+            val msg = if (rememberOnDevice) {
+                "המפתח נשמר והוצפן בחומרה בהצלחה! 🔒"
+            } else {
+                "המפתח הוגדר לסשן הנוכחי בלבד (ללא שמירה במכשיר)! 🛡️"
+            }
+            Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
         }
     }
 

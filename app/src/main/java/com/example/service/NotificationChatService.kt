@@ -537,10 +537,11 @@ class NotificationChatService : Service() {
             BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset)
         } catch (_: Exception) { null }
 
-        // Check if the latest AI response includes an image to display directly inside the notification (Task #7)
+        // Check if the latest AI response includes an image to display directly inside the notification (Task #7 & #37)
         val generatedImageBitmap: Bitmap? = if (!isThinking && latestAttachmentUri != null && latestAttachmentMimeType?.startsWith("image/") == true) {
             try {
-                val file = File(latestAttachmentUri!!)
+                val primaryImagePath = latestAttachmentUri!!.substringBefore("|").trim()
+                val file = File(primaryImagePath)
                 if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
             } catch (_: Exception) { null }
         } else null

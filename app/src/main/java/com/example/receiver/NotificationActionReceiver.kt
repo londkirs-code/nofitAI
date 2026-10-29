@@ -61,16 +61,28 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 val name = intent.getStringExtra(NotificationChatService.EXTRA_ATTACHMENT_NAME)
                     ?: NotificationChatService.latestAttachmentName
                 if (!uriStr.isNullOrBlank()) {
-                    val saved = MediaStorageManager.saveFileToPublicDownloads(context, uriStr, mime, name)
-                    if (saved != null) {
-                        Toast.makeText(
-                            context,
+                    val uris = uriStr.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+                    val savedNames = uris.mapIndexedNotNull { index, singleUri ->
+                        val itemSuggestedName = if (uris.size > 1) {
+                            "pollinations_${System.currentTimeMillis()}_${index + 1}.jpg"
+                        } else {
+                            name
+                        }
+                        MediaStorageManager.saveFileToPublicDownloads(context, singleUri, mime, itemSuggestedName)
+                    }
+                    if (savedNames.isNotEmpty()) {
+                        val msg = if (savedNames.size > 1) {
                             AppStrings.tr(
-                                "הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): $saved 📥",
-                                "File downloaded to Downloads/NotifAI: $saved 📥"
-                            ),
-                            Toast.LENGTH_LONG
-                        ).show()
+                                "${savedNames.size} תמונות הורדו לתיקיית ההורדות (Downloads/NotifAI) 📥",
+                                "${savedNames.size} images downloaded to Downloads/NotifAI 📥"
+                            )
+                        } else {
+                            AppStrings.tr(
+                                "הקובץ הורד לתיקיית ההורדות (Downloads/NotifAI): ${savedNames.first()} 📥",
+                                "File downloaded to Downloads/NotifAI: ${savedNames.first()} 📥"
+                            )
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 }
             }

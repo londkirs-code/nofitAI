@@ -19,6 +19,7 @@ import com.example.data.remote.BlockScope
 import com.example.data.remote.ChatTurn
 import com.example.data.security.CryptoEngine
 import com.example.util.MediaStorageManager
+import com.example.util.PollinationsImageManager
 import kotlinx.coroutines.flow.Flow
 import java.io.InputStream
 import java.text.SimpleDateFormat
@@ -53,6 +54,36 @@ class AiRepository(
         chatDao.getMessagesForConversationFlow(conversationId)
 
     /**
+     * Ensures the built-in Pollinations image generation model is present in the database
+     * and set as the default image generator without requiring any API key from the user.
+     */
+    suspend fun ensureBuiltInPollinationsKey() {
+        val existing = apiKeyDao.getKeyById(BUILTIN_POLLINATIONS_KEY_ID)
+        val selectedModel = PollinationsImageManager.getSelectedModel(context)
+        if (existing == null) {
+            val builtInKey = ApiKeyEntity(
+                id = BUILTIN_POLLINATIONS_KEY_ID,
+                provider = ProviderType.POLLINATIONS,
+                name = "Pollinations AI (מובנה - ללא מפתח)",
+                encryptedKey = "",
+                selectedModel = selectedModel,
+                priority = 1,
+                isEnabled = true,
+                supportedTasks = AiTaskType.IMAGE_GEN.name,
+                fallbackModels = "flux-realism,flux-3d,turbo"
+            )
+            apiKeyDao.insertOrUpdate(builtInKey)
+        } else if (existing.selectedModel != selectedModel) {
+            apiKeyDao.update(existing.copy(selectedModel = selectedModel))
+        }
+        val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+        val dedicatedKeyPref = PREF_DEDICATED_KEY_PREFIX + AiTaskType.IMAGE_GEN.name
+        if (!prefs.contains(dedicatedKeyPref)) {
+            prefs.edit().putString(dedicatedKeyPref, BUILTIN_POLLINATIONS_KEY_ID).apply()
+        }
+    }
+
+    /**
      * Gets or creates active conversation.
      * Automatically starts a new conversation if last interaction was more than 3 hours ago.
      */
@@ -81,7 +112,7 @@ class AiRepository(
     }
 
     /**
-     * Infers the effective task type from the user's prompt, attachment, and requested output mode (Tasks #2, #6, #16).
+     * Infers the effective task type from the user's prompt, attachment, and requested output mode (Tasks #2, #6, #16, #37).
      */
     fun resolveRequiredTaskType(
         prompt: String,
@@ -99,7 +130,8 @@ class AiRepository(
         }
         val lower = prompt.lowercase()
         val isImageGenPrompt = listOf(
-            "צור תמונה", "צייר", "ייצר תמונה", "תמונה של", "generate image", "draw ", "create an image"
+            "צור תמונה", "צייר", "ייצר תמונה", "תמונה של", "generate image", "draw ", "create an image",
+            "הכן תמונה", "תכין תמונה", "איור של", "ציור של", "צילום של", "צור איור", "image of", "photo of", "illustration of"
         ).any { lower.contains(it) }
         if (isImageGenPrompt) return AiTaskType.IMAGE_GEN
 
@@ -127,6 +159,7 @@ class AiRepository(
         conversationId: Long? = null,
         requestedOutputType: AiTaskType? = null
     ): QueryResult {
+        ensureBuiltInPollinationsKey()
         val allEnabledKeys = apiKeyDao.getEnabledKeys()
         if (allEnabledKeys.isEmpty()) {
             throw IllegalStateException(
@@ -167,8 +200,15 @@ class AiRepository(
             null
         }
 
+        val hasNonPollinationsKey = allEnabledKeys.any { it.provider != ProviderType.POLLINATIONS }
         val effectiveOutputType = requestedOutputType ?: getPreferredOutputType(context)
-        val requiredTask = resolveRequiredTaskType(prompt, attachment, effectiveOutputType)
+        val requiredTask = if (!hasNonPollinationsKey && attachment == null) {
+            // If only the built-in Pollinations image model is enabled (no external keys entered),
+            // route directly as IMAGE_GEN (which filters general questions politely and creates images for descriptions)
+            AiTaskType.IMAGE_GEN
+        } else {
+            resolveRequiredTaskType(prompt, attachment, effectiveOutputType)
+        }
 
         val priorMessages = chatDao.getMessagesForConversation(conv.id)
             .filter { it.role == "user" || it.role == "assistant" }
@@ -198,6 +238,17 @@ class AiRepository(
         )
         chatDao.addMessageAndUpdateConversation(conv.id, userMessage, prompt)
 
+        // Find any available Google Gemini key for automatic Hebrew->English translation in Pollinations
+        val activeGeminiKeyEntity = allEnabledKeys.firstOrNull { it.provider == ProviderType.GEMINI }
+            ?: apiKeyDao.getAllKeys().firstOrNull { it.provider == ProviderType.GEMINI }
+        val activeGeminiPlainKey = activeGeminiKeyEntity?.let {
+            PollinationsImageManager.getSessionOnlyKey(it.id)?.takeIf { k -> k.isNotBlank() }
+                ?: CryptoEngine.decrypt(it.encryptedKey)
+        }
+        val googleTranslationKey = PollinationsImageManager.getGoogleTranslationKey(context, activeGeminiPlainKey)
+        val pollinationsAspectRatio = PollinationsImageManager.getAspectRatio(context)
+        val pollinationsImageCount = PollinationsImageManager.getImageCount(context)
+
         // Sort keys so:
         // 1. Any key explicitly dedicated to requiredTask comes first,
         // 2. Keys supporting requiredTask come next (in priority order),
@@ -208,7 +259,11 @@ class AiRepository(
             .filter { it.id != dedicatedKeyId && requiredTask in it.parsedSupportedTasks }
             .sortedBy { it.priority }
         val otherFallbackKeys = allEnabledKeys
-            .filter { it.id != dedicatedKeyId && requiredTask !in it.parsedSupportedTasks }
+            .filter {
+                it.id != dedicatedKeyId &&
+                    requiredTask !in it.parsedSupportedTasks &&
+                    (requiredTask == AiTaskType.IMAGE_GEN || !hasNonPollinationsKey || it.provider != ProviderType.POLLINATIONS)
+            }
             .sortedBy { it.priority }
         val orderedKeysToTry = listOfNotNull(dedicatedKey) + matchingKeys + otherFallbackKeys
 
@@ -253,8 +308,9 @@ class AiRepository(
                 continue
             }
 
-            val rawKey = CryptoEngine.decrypt(keyEntity.encryptedKey)
-            if (rawKey.isBlank()) {
+            val rawKey = PollinationsImageManager.getSessionOnlyKey(keyEntity.id)?.takeIf { it.isNotBlank() }
+                ?: CryptoEngine.decrypt(keyEntity.encryptedKey)
+            if (rawKey.isBlank() && keyEntity.provider != ProviderType.POLLINATIONS) {
                 continue
             }
 
@@ -291,11 +347,38 @@ class AiRepository(
                 }
 
                 try {
+                    // Enforce request filtering for image generation even when falling back to a non-Pollinations key
+                    if (requiredTask == AiTaskType.IMAGE_GEN &&
+                        keyEntity.provider != ProviderType.POLLINATIONS &&
+                        PollinationsImageManager.isGeneralQuestionNotImageDescription(prompt)
+                    ) {
+                        val politeRefusal = PollinationsImageManager.getPoliteRefusalMessage()
+                        val refusalMsg = ChatMessageEntity(
+                            conversationId = conv.id,
+                            role = "assistant",
+                            content = politeRefusal,
+                            provider = keyEntity.provider.displayName,
+                            model = candidateModel,
+                            tokens = 0,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        chatDao.addMessageAndUpdateConversation(conv.id, refusalMsg, politeRefusal)
+                        return QueryResult(
+                            responseText = politeRefusal,
+                            provider = keyEntity.provider,
+                            model = candidateModel,
+                            keyName = keyEntity.name,
+                            fallbackOccurred = fallbackOccurred,
+                            fallbackReason = fallbackReason,
+                            conversationId = conv.id
+                        )
+                    }
+
                     val baseSysPrompt = keyEntity.systemPrompt?.takeIf { it.isNotBlank() }
                         ?: com.example.util.AppStrings.defaultAiLanguageInstruction()
 
                     val outputModeInstruction = when (requiredTask) {
-                        AiTaskType.IMAGE_GEN -> "\nהמשתמש ביקש ייצור תמונה. תאר בצורה עשירה, מפורטת וציורית את התמונה המבוקשת."
+                        AiTaskType.IMAGE_GEN -> "\nהמשתמש ביקש ייצור תמונה. תאר בצורה עשירה, מפורטת וציורית את התמונה המבוקשת. חל איסור מוחלט ליצור דמויות נשים ובנות; מותרים רק גברים, בנים וילדים קטנים עד גיל 6, ובמקרה אחר העדף סצנה ללא אנשים."
                         AiTaskType.AUDIO_GEN -> "\nהמשתמש ביקש ייצור סאונד/שמע. כתוב את הטקסט המלא להקראה קולית או את מילות השיר בצורה קולחת וברורה."
                         AiTaskType.VIDEO_GEN -> "\nהמשתמש ביקש ייצור וידאו/סרטון. פרט תסריט ויזואלי מלא וסצנות מדויקות."
                         else -> ""
@@ -316,28 +399,60 @@ class AiRepository(
                         maxOf(keyEntity.maxTokens, 4096)
                     }
 
+                    val effectivePrompt = if (requiredTask == AiTaskType.IMAGE_GEN && keyEntity.provider != ProviderType.POLLINATIONS) {
+                        PollinationsImageManager.enforceModestyInstruction(prompt).first
+                    } else {
+                        prompt
+                    }
+
                     val response: AiResponse = apiClient.queryAi(
                         provider = keyEntity.provider,
                         apiKey = rawKey,
                         model = candidateModel,
-                        prompt = prompt,
+                        prompt = effectivePrompt,
                         history = historyTurns,
                         systemInstruction = effectiveSystemInstruction,
                         temperature = keyEntity.temperature,
                         maxTokens = effectiveMaxTokens,
                         attachment = attachment,
                         customBaseUrl = keyEntity.customBaseUrl,
-                        customProtocol = keyEntity.customProtocol
+                        customProtocol = keyEntity.customProtocol,
+                        aspectRatio = pollinationsAspectRatio,
+                        imageCount = pollinationsImageCount,
+                        googleTranslationKey = googleTranslationKey
                     )
 
                     apiKeyDao.recordSuccess(keyEntity.id)
 
-                    // Handle generated media (from native API bytes, synthesized for requested output mode, or URL in response)
+                    // Handle generated media (from native API bytes, multi-image batch, synthesized for requested output mode, or URL in response)
                     var genUri: String? = null
                     var genMime: String? = null
                     var genName: String? = null
 
-                    if (response.generatedMediaBytes != null && response.generatedMediaBytes.isNotEmpty()) {
+                    if (response.generatedMediaBytesList.isNotEmpty()) {
+                        genMime = response.generatedMediaMimeType ?: "image/jpeg"
+                        val baseName = (response.generatedMediaName ?: "pollinations_image.jpg").substringBeforeLast(".")
+                        val ext = (response.generatedMediaName ?: "pollinations_image.jpg").substringAfterLast(".", "jpg")
+                        val savedUris = response.generatedMediaBytesList.mapIndexedNotNull { idx, bytes ->
+                            if (bytes.isEmpty()) null else {
+                                MediaStorageManager.persistMediaForChat(
+                                    context = context,
+                                    directBytes = bytes,
+                                    mimeType = genMime,
+                                    originalName = "${baseName}_${idx + 1}.$ext",
+                                    forceSave = true
+                                )
+                            }
+                        }
+                        if (savedUris.isNotEmpty()) {
+                            genUri = savedUris.joinToString("|")
+                            genName = if (savedUris.size > 1) {
+                                "גלריית Pollinations (${savedUris.size} תמונות • ${pollinationsAspectRatio.label})"
+                            } else {
+                                response.generatedMediaName ?: "pollinations_image.jpg"
+                            }
+                        }
+                    } else if (response.generatedMediaBytes != null && response.generatedMediaBytes.isNotEmpty()) {
                         genMime = response.generatedMediaMimeType ?: "image/png"
                         genName = response.generatedMediaName ?: "notifai_output"
                         genUri = MediaStorageManager.persistMediaForChat(
@@ -347,55 +462,57 @@ class AiRepository(
                             originalName = genName,
                             forceSave = true
                         )
-                    } else when (requiredTask) {
-                        AiTaskType.IMAGE_GEN -> {
-                            genMime = "image/png"
-                            genName = "notifai_image_${System.currentTimeMillis()}.png"
-                            genUri = MediaStorageManager.generateVisualPosterPng(
-                                context = context,
-                                prompt = prompt,
-                                aiDescription = response.text
-                            )
-                        }
-                        AiTaskType.AUDIO_GEN -> {
-                            genMime = "audio/wav"
-                            genName = "notifai_audio_${System.currentTimeMillis()}.wav"
-                            genUri = MediaStorageManager.synthesizeAudioFile(
-                                context = context,
-                                textToSpeak = response.text
-                            )
-                        }
-                        AiTaskType.VIDEO_GEN -> {
-                            val mp4Path = MediaStorageManager.generateMp4VideoFile(
-                                context = context,
-                                prompt = prompt,
-                                aiDescription = response.text
-                            )
-                            if (mp4Path != null) {
-                                genMime = "video/mp4"
-                                genName = "notifai_video_${System.currentTimeMillis()}.mp4"
-                                genUri = mp4Path
-                            } else {
+                    } else if (keyEntity.provider != ProviderType.POLLINATIONS) {
+                        when (requiredTask) {
+                            AiTaskType.IMAGE_GEN -> {
                                 genMime = "image/png"
-                                genName = "notifai_video_storyboard_${System.currentTimeMillis()}.png"
+                                genName = "notifai_image_${System.currentTimeMillis()}.png"
                                 genUri = MediaStorageManager.generateVisualPosterPng(
                                     context = context,
-                                    prompt = "🎬 Storyboard: $prompt",
+                                    prompt = prompt,
                                     aiDescription = response.text
                                 )
                             }
-                        }
-                        else -> {
-                            if (effectiveOutputType == AiTaskType.FILE_INPUT) {
-                                genMime = "text/plain"
-                                genName = "notifai_document_${System.currentTimeMillis()}.txt"
-                                genUri = MediaStorageManager.persistMediaForChat(
+                            AiTaskType.AUDIO_GEN -> {
+                                genMime = "audio/wav"
+                                genName = "notifai_audio_${System.currentTimeMillis()}.wav"
+                                genUri = MediaStorageManager.synthesizeAudioFile(
                                     context = context,
-                                    directBytes = response.text.toByteArray(Charsets.UTF_8),
-                                    mimeType = genMime,
-                                    originalName = genName,
-                                    forceSave = true
+                                    textToSpeak = response.text
                                 )
+                            }
+                            AiTaskType.VIDEO_GEN -> {
+                                val mp4Path = MediaStorageManager.generateMp4VideoFile(
+                                    context = context,
+                                    prompt = prompt,
+                                    aiDescription = response.text
+                                )
+                                if (mp4Path != null) {
+                                    genMime = "video/mp4"
+                                    genName = "notifai_video_${System.currentTimeMillis()}.mp4"
+                                    genUri = mp4Path
+                                } else {
+                                    genMime = "image/png"
+                                    genName = "notifai_video_storyboard_${System.currentTimeMillis()}.png"
+                                    genUri = MediaStorageManager.generateVisualPosterPng(
+                                        context = context,
+                                        prompt = "🎬 Storyboard: $prompt",
+                                        aiDescription = response.text
+                                    )
+                                }
+                            }
+                            else -> {
+                                if (effectiveOutputType == AiTaskType.FILE_INPUT) {
+                                    genMime = "text/plain"
+                                    genName = "notifai_document_${System.currentTimeMillis()}.txt"
+                                    genUri = MediaStorageManager.persistMediaForChat(
+                                        context = context,
+                                        directBytes = response.text.toByteArray(Charsets.UTF_8),
+                                        mimeType = genMime,
+                                        originalName = genName,
+                                        forceSave = true
+                                    )
+                                }
                             }
                         }
                     }
@@ -648,18 +765,37 @@ class AiRepository(
         supportedTasks: String = AiTaskType.DEFAULT_TASKS_CSV,
         fallbackModels: String = "",
         customBaseUrl: String? = null,
-        customProtocol: String = "OPENAI"
+        customProtocol: String = "OPENAI",
+        rememberOnDevice: Boolean = true
     ) {
+        val targetId = id ?: UUID.randomUUID().toString()
         val existing = if (id != null) apiKeyDao.getKeyById(id) else null
-        val encrypted = if (plainKey.isBlank() && existing != null) {
-            existing.encryptedKey
+        val encrypted = if (!rememberOnDevice) {
+            if (plainKey.isNotBlank()) {
+                PollinationsImageManager.putSessionOnlyKey(targetId, plainKey)
+                if (provider == ProviderType.GEMINI) {
+                    PollinationsImageManager.updateGoogleTranslationKey(context, plainKey, rememberOnDevice = false)
+                }
+            }
+            ""
         } else {
-            CryptoEngine.encrypt(plainKey)
+            PollinationsImageManager.clearSessionOnlyKey(targetId)
+            if (plainKey.isNotBlank() && provider == ProviderType.GEMINI) {
+                PollinationsImageManager.updateGoogleTranslationKey(context, plainKey, rememberOnDevice = true)
+            }
+            if (plainKey.isBlank() && existing != null) {
+                existing.encryptedKey
+            } else {
+                CryptoEngine.encrypt(plainKey)
+            }
         }
         val key = ApiKeyEntity(
-            id = id ?: UUID.randomUUID().toString(),
+            id = targetId,
             provider = provider,
-            name = name.ifBlank { "${provider.displayName} #${priority}" },
+            name = name.ifBlank {
+                if (!rememberOnDevice) "${provider.displayName} #${priority} (לסשן נוכחי בלבד)"
+                else "${provider.displayName} #${priority}"
+            },
             encryptedKey = encrypted,
             selectedModel = model.ifBlank { provider.defaultModel },
             priority = priority,
@@ -702,7 +838,8 @@ class AiRepository(
 
     suspend fun fetchModelsForKeyId(keyId: String): FetchModelsResponse {
         val key = apiKeyDao.getKeyById(keyId) ?: return FetchModelsResponse(false, emptyList(), "מפתח לא נמצא")
-        val plainKey = CryptoEngine.decrypt(key.encryptedKey)
+        val plainKey = PollinationsImageManager.getSessionOnlyKey(key.id)?.takeIf { it.isNotBlank() }
+            ?: CryptoEngine.decrypt(key.encryptedKey)
         return apiClient.fetchAvailableModelsDetailed(
             provider = key.provider,
             apiKey = plainKey,
@@ -725,6 +862,8 @@ class AiRepository(
     }
 
     suspend fun getDecryptedKey(id: String): String {
+        val sessionKey = PollinationsImageManager.getSessionOnlyKey(id)
+        if (!sessionKey.isNullOrBlank()) return sessionKey
         val key = apiKeyDao.getKeyById(id) ?: return ""
         return CryptoEngine.decrypt(key.encryptedKey)
     }
@@ -734,11 +873,13 @@ class AiRepository(
     }
 
     suspend fun deleteKey(entity: ApiKeyEntity) {
+        PollinationsImageManager.clearSessionOnlyKey(entity.id)
         apiKeyDao.delete(entity)
     }
 
     suspend fun deleteAllKeys() {
         apiKeyDao.deleteAllKeys()
+        ensureBuiltInPollinationsKey()
     }
 
     suspend fun reorderKeys(orderedIds: List<String>) {
@@ -774,7 +915,9 @@ class AiRepository(
     suspend fun exportAllKeysWithPlain(): List<Pair<ApiKeyEntity, String>> {
         val all = apiKeyDao.getAllKeys().sortedBy { it.priority }
         return all.map { entity ->
-            entity to CryptoEngine.decrypt(entity.encryptedKey)
+            val plain = PollinationsImageManager.getSessionOnlyKey(entity.id)?.takeIf { it.isNotBlank() }
+                ?: CryptoEngine.decrypt(entity.encryptedKey)
+            entity to plain
         }
     }
 
@@ -873,6 +1016,7 @@ class AiRepository(
     }
 
     companion object {
+        const val BUILTIN_POLLINATIONS_KEY_ID = "builtin_pollinations_default"
         private const val PREF_REQUESTED_OUTPUT_TYPE = "preferred_output_type"
         private const val PREF_DEDICATED_KEY_PREFIX = "dedicated_key_for_task_"
 
@@ -891,7 +1035,11 @@ class AiRepository(
 
         fun getDedicatedKeyIdForTask(context: Context, taskType: AiTaskType): String? {
             val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
-            return prefs.getString(PREF_DEDICATED_KEY_PREFIX + taskType.name, null)?.takeIf { it.isNotBlank() }
+            val key = PREF_DEDICATED_KEY_PREFIX + taskType.name
+            if (!prefs.contains(key) && taskType == AiTaskType.IMAGE_GEN) {
+                return BUILTIN_POLLINATIONS_KEY_ID
+            }
+            return prefs.getString(key, null)?.takeIf { it.isNotBlank() }
         }
 
         fun setDedicatedKeyIdForTask(context: Context, taskType: AiTaskType, keyId: String?) {

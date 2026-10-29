@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -97,6 +98,7 @@ import com.example.ui.components.CenteredMenuOption
 import com.example.ui.components.CenteredSelectionMenuDialog
 import com.example.ui.components.DragHandleBadge
 import com.example.ui.components.DraggableReorderColumn
+import com.example.ui.components.PollinationsConfigCard
 import com.example.ui.dialogs.AddKeyDialog
 import com.example.ui.viewmodel.NotifAiViewModel
 import com.example.util.AppStrings
@@ -135,6 +137,7 @@ fun ApiKeysScreen(
     var topFetchedModels by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
     var topIsFetchingModels by remember { mutableStateOf(false) }
     var topFetchStatusText by remember { mutableStateOf<String?>(null) }
+    var topRememberKeyOnDevice by remember { mutableStateOf(true) }
 
     LaunchedEffect(topQuickKeyText, topDetectedProvider) {
         val trimmed = topQuickKeyText.trim()
@@ -417,6 +420,26 @@ fun ApiKeysScreen(
                         }
 
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { topRememberKeyOnDevice = !topRememberKeyOnDevice },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = topRememberKeyOnDevice,
+                                onCheckedChange = { topRememberKeyOnDevice = it }
+                            )
+                            Text(
+                                text = AppStrings.tr(
+                                    "זכור מפתח במכשיר (פרטיות: נשמר במכשיר רק אם מסומן 'זכור')",
+                                    "Remember key on device (Privacy: saved on device ONLY if 'Remember' is checked)"
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp
+                            )
+                        }
+
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -441,7 +464,8 @@ fun ApiKeysScreen(
                                             ),
                                             fallbackModels = "",
                                             customBaseUrl = null,
-                                            customProtocol = CustomApiProtocol.OPENAI.name
+                                            customProtocol = CustomApiProtocol.OPENAI.name,
+                                            rememberOnDevice = topRememberKeyOnDevice
                                         )
                                         topQuickKeyText = ""
                                         topWasProviderAutoDetected = false
@@ -491,6 +515,31 @@ fun ApiKeysScreen(
                 }
             }
         }
+
+        // Built-in Default Pollinations Image Generator Card (Works out-of-the-box without API key)
+        PollinationsConfigCard(
+            modifier = Modifier.padding(bottom = 12.dp),
+            initiallyExpanded = false,
+            hasActiveGeminiKeyInRepo = apiKeys.any { it.provider == ProviderType.GEMINI && it.isEnabled },
+            onModelChanged = { chosenModel ->
+                val builtIn = apiKeys.find { it.id == AiRepository.BUILTIN_POLLINATIONS_KEY_ID || it.provider == ProviderType.POLLINATIONS }
+                if (builtIn != null) {
+                    viewModel.addOrUpdateApiKey(
+                        id = builtIn.id,
+                        provider = ProviderType.POLLINATIONS,
+                        name = builtIn.name,
+                        rawKey = "",
+                        model = chosenModel,
+                        priority = builtIn.priority,
+                        temperature = builtIn.temperature,
+                        maxTokens = builtIn.maxTokens,
+                        systemPrompt = builtIn.systemPrompt,
+                        supportedTasks = builtIn.supportedTasks,
+                        fallbackModels = builtIn.fallbackModels
+                    )
+                }
+            }
+        )
 
         // Sub-header with Add / Configure button
         Row(
@@ -840,7 +889,7 @@ fun ApiKeysScreen(
                 keyToEdit = null
                 dialogInitialRawKey = ""
             },
-            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol ->
+            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol, rememberOnDevice ->
                 viewModel.addOrUpdateApiKey(
                     id = keyToEdit?.id,
                     provider = provider,
@@ -854,7 +903,8 @@ fun ApiKeysScreen(
                     supportedTasks = supportedTasks,
                     fallbackModels = fallbackModels,
                     customBaseUrl = customBaseUrl,
-                    customProtocol = customProtocol
+                    customProtocol = customProtocol,
+                    rememberOnDevice = rememberOnDevice
                 )
                 if (keyToEdit == null && dialogInitialRawKey.isNotBlank()) {
                     topQuickKeyText = ""

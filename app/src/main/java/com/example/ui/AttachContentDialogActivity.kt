@@ -1010,6 +1010,21 @@ private fun ActionsPopupSection(
                     )
                 }
             }
+
+            // Built-in Pollinations Image Generator Controls (Ratio 1:1/3:4/4:3/9:16/16:9, Count 1-4, Auto-Translate, Modesty & Filtering)
+            com.example.ui.components.PollinationsConfigCard(
+                modifier = Modifier.padding(top = 6.dp),
+                initiallyExpanded = preferredOutputType == AiTaskType.IMAGE_GEN,
+                hasActiveGeminiKeyInRepo = allKeys.any { it.provider == com.example.data.model.ProviderType.GEMINI && it.isEnabled },
+                onModelChanged = { chosenModel ->
+                    val builtIn = allKeys.find { it.id == AiRepository.BUILTIN_POLLINATIONS_KEY_ID || it.provider == com.example.data.model.ProviderType.POLLINATIONS }
+                    if (builtIn != null && repository != null) {
+                        scope.launch {
+                            repository.updateKeyEntity(builtIn.copy(selectedModel = chosenModel))
+                        }
+                    }
+                }
+            )
         }
 
         // Per-Task Dedicated Key & Model Routing directly inside 'פעולות' (Task #2)
@@ -1882,7 +1897,7 @@ private fun ActionsPopupSection(
                 showAddOrEditKeyDialog = false
                 keyBeingEdited = null
             },
-            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol ->
+            onSave = { provider, name, rawKey, model, priority, temperature, maxTokens, systemPrompt, supportedTasks, fallbackModels, customBaseUrl, customProtocol, rememberOnDevice ->
                 scope.launch {
                     repository.saveApiKey(
                         id = keyBeingEdited?.id,
@@ -1897,7 +1912,8 @@ private fun ActionsPopupSection(
                         supportedTasks = supportedTasks,
                         fallbackModels = fallbackModels,
                         customBaseUrl = customBaseUrl,
-                        customProtocol = customProtocol
+                        customProtocol = customProtocol,
+                        rememberOnDevice = rememberOnDevice
                     )
                     showAddOrEditKeyDialog = false
                     keyBeingEdited = null

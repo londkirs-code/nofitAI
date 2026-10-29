@@ -21,7 +21,8 @@ data class AiModelInfo(
             when {
                 lower.contains("dall-e") || lower.contains("flux") || lower.contains("stable-diffusion") ||
                         lower.contains("imagen") || lower.contains("sdxl") || lower.contains("midjourney") ||
-                        lower.contains("image-generation") -> {
+                        lower.contains("image-generation") || lower == "turbo" || lower == "any-dark" ||
+                        lower.contains("pollinations") -> {
                     set.add(AiTaskType.IMAGE_GEN)
                     if (lower.contains("gemini")) {
                         set.add(AiTaskType.TEXT)
@@ -64,6 +65,8 @@ data class AiModelInfo(
 
             // Top-tier flagship & high-value models
             when {
+                lower == "flux" || lower == "flux-realism" || lower == "flux-pro" -> score += 98
+                lower.startsWith("flux-") || lower == "turbo" || lower == "any-dark" -> score += 92
                 lower == "gemini-2.5-pro" || lower == "gemini-2.5-flash" -> score += 95
                 lower == "llama-3.3-70b-versatile" -> score += 95
                 lower.contains("claude-3-7-sonnet") || lower.contains("claude-3.7-sonnet") -> score += 95
@@ -96,7 +99,8 @@ data class AiModelInfo(
             val lower = id.lowercase()
             return when {
                 lower.contains("dall-e") || lower.contains("flux") || lower.contains("imagen") ||
-                        lower.contains("image-generation") || lower.contains("sdxl") -> "🎨 יצירת תמונות"
+                        lower.contains("image-generation") || lower.contains("sdxl") ||
+                        lower == "turbo" || lower == "any-dark" -> "🎨 יצירת תמונות"
                 lower.contains("tts") || lower.contains("speech") || lower.contains("audio") -> "🔊 יצירת סאונד/שמע"
                 lower.contains("sora") || lower.contains("veo") || lower.contains("video") -> "🎬 יצירת וידאו"
                 lower.contains("r1") || lower.contains("reason") || lower.contains("qwq") ||

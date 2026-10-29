@@ -392,6 +392,11 @@ fun NotificationCenterScreen(
                     }
                 }
 
+                com.example.ui.components.PollinationsConfigCard(
+                    initiallyExpanded = false,
+                    hasActiveGeminiKeyInRepo = apiKeys.any { it.provider == com.example.data.model.ProviderType.GEMINI && it.isEnabled }
+                )
+
                 OutlinedTextField(
                     value = testQueryInput,
                     onValueChange = { testQueryInput = it },

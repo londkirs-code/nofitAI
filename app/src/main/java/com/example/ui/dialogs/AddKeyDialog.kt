@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -104,6 +105,7 @@ import com.example.ui.components.CenteredSelectionMenuDialog
 import com.example.ui.components.DragHandleBadge
 import com.example.ui.components.DraggableReorderColumn
 import com.example.util.AppStrings
+import com.example.util.PollinationsImageManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -129,7 +131,8 @@ fun AddKeyDialog(
         supportedTasks: String,
         fallbackModels: String,
         customBaseUrl: String?,
-        customProtocol: String
+        customProtocol: String,
+        rememberOnDevice: Boolean
     ) -> Unit
 ) {
     val context = LocalContext.current
@@ -152,6 +155,11 @@ fun AddKeyDialog(
     }
     var userEditedNameManually by remember { mutableStateOf(existingKey != null) }
     var apiKeyText by remember { mutableStateOf(initialRawKey.trim()) }
+    var rememberKeyOnDevice by remember {
+        mutableStateOf(
+            existingKey?.let { it.encryptedKey.isNotEmpty() || PollinationsImageManager.getSessionOnlyKey(it.id) == null } ?: true
+        )
+    }
 
     // Custom API Provider fields
     var customBaseUrl by remember { mutableStateOf(existingKey?.customBaseUrl.orEmpty()) }
@@ -527,6 +535,35 @@ fun AddKeyDialog(
                             .testTag("api_key_input")
                     )
 
+                    if (selectedProvider != ProviderType.POLLINATIONS) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { rememberKeyOnDevice = !rememberKeyOnDevice },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = rememberKeyOnDevice,
+                                onCheckedChange = { rememberKeyOnDevice = it }
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = AppStrings.tr(
+                                    "זכור מפתח במכשיר (פרטיות: נשמר במכשיר רק אם מסומן 'זכור', וב-Gemini נשלח ישירות לגוגל)",
+                                    "Remember key on device (Privacy: saved on device ONLY if 'Remember' is checked, sent directly to Google)"
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
                     // Automatic Live Model Loading Status Banner (No manual scan button needed)
                     AnimatedVisibility(visible = isFetchingModels || fetchStatusMessage != null) {
                         Surface(
@@ -690,6 +727,7 @@ fun AddKeyDialog(
                                             ProviderType.MISTRAL -> AppStrings.tr("Mistral Large, Codestral ו-Pixtral", "Mistral Large, Codestral & Pixtral")
                                             ProviderType.GROK -> AppStrings.tr("xAI Grok 3 ו-Grok 2 Vision", "xAI Grok 3 & Grok 2 Vision")
                                             ProviderType.HUGGINGFACE -> AppStrings.tr("HuggingFace Serverless Inference", "HuggingFace Serverless Inference")
+                                            ProviderType.POLLINATIONS -> AppStrings.tr("יצירת תמונות מובנית (Flux) ללא צורך במפתח API", "Built-in Image Generation (Flux) without API key")
                                             ProviderType.CUSTOM -> AppStrings.tr("שרת API מותאם אישית (OpenAI / Gemini / Claude)", "Custom API Server (OpenAI / Gemini / Claude)")
                                         },
                                         style = MaterialTheme.typography.bodySmall,
@@ -1599,7 +1637,7 @@ fun AddKeyDialog(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (existingKey == null && apiKeyText.isBlank()) {
+                        if (existingKey == null && apiKeyText.isBlank() && selectedProvider != ProviderType.POLLINATIONS) {
                             errorMessage = AppStrings.tr("נא להזין מפתח API תקין", "Please enter a valid API key")
                             return@Button
                         }
@@ -1617,7 +1655,8 @@ fun AddKeyDialog(
                             AiTaskType.toCsv(selectedTasks),
                             enabledFallbackModels.filter { it != finalModel }.joinToString(","),
                             customBaseUrl.trim().takeIf { it.isNotBlank() },
-                            customProtocol
+                            customProtocol,
+                            rememberKeyOnDevice
                         )
                     },
                     modifier = Modifier.testTag("save_api_key_btn"),

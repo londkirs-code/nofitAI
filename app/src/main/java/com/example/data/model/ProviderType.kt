@@ -62,6 +62,22 @@ enum class ProviderType(
     val documentationUrl: String,
     val apiKeysWebUrl: String
 ) {
+    POLLINATIONS(
+        displayName = "Pollinations AI (יצירת תמונות מובנית - ללא צורך במפתח)",
+        defaultModel = "flux",
+        suggestedModels = listOf(
+            "flux",
+            "flux-realism",
+            "flux-anime",
+            "flux-3d",
+            "flux-pro",
+            "any-dark",
+            "turbo"
+        ),
+        keyHint = "ללא צורך במפתח API (מובנה) • ניתן להזין מפתח Google לתרגום אוטומטי",
+        documentationUrl = "pollinations.ai (מובנה באפליקציה)",
+        apiKeysWebUrl = "https://aistudio.google.com/apikey"
+    ),
     GROQ(
         displayName = "Groq (חינמי ומהיר במיוחד)",
         defaultModel = "llama-3.3-70b-versatile",
