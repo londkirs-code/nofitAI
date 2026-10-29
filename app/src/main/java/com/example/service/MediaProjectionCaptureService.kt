@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -241,8 +242,14 @@ class MediaProjectionCaptureService : Service() {
     }
 
     private fun buildForegroundNotification(): Notification {
+        val largeAvatar = try {
+            BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset)
+        } catch (_: Exception) { null }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_notifai_bell)
+            .apply {
+                if (largeAvatar != null) setLargeIcon(largeAvatar)
+            }
             .setContentTitle("NotifAI • לוכד צילום מסך")
             .setContentText("שולח את צילום המסך ישירות למודל ה-AI…")
             .setPriority(NotificationCompat.PRIORITY_LOW)

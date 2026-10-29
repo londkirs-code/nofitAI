@@ -104,6 +104,7 @@ import com.example.ui.components.CenteredMenuOption
 import com.example.ui.components.CenteredSelectionMenuDialog
 import com.example.ui.components.DragHandleBadge
 import com.example.ui.components.DraggableReorderColumn
+import com.example.ui.components.PollinationsConfigCard
 import com.example.util.AppStrings
 import com.example.util.PollinationsImageManager
 import kotlinx.coroutines.delay
@@ -428,114 +429,128 @@ fun AddKeyDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // 1. TOP ELEMENT: API Key input - AUTO-DETECTS PROVIDER & FETCHES MODELS AUTOMATICALLY
-                    Text(
-                        text = AppStrings.tr(
-                            "1. הזנת מפתח API (מזהה ספק ומודלים אוטומטית מיד עם ההזנה):",
-                            "1. Enter API Key (Auto-detects provider & models immediately):"
-                        ),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-
-                    OutlinedTextField(
-                        value = apiKeyText,
-                        onValueChange = { newText ->
-                            val trimmed = newText.trim()
-                            apiKeyText = trimmed
-                            errorMessage = null
-
-                            val detected = ProviderType.detectProviderFromKey(trimmed, name)
-                            if (detected != null) {
-                                applyProviderChange(detected, isAutoDetected = true)
+                    if (selectedProvider == ProviderType.POLLINATIONS) {
+                        // Embedded Pollinations settings card directly inside Edit Key dialog
+                        PollinationsConfigCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            initiallyExpanded = true,
+                            hasActiveGeminiKeyInRepo = false,
+                            onModelChanged = { chosenModel ->
+                                selectedModel = chosenModel
+                                customModelInput = chosenModel
+                            },
+                            onEngineEnabledChanged = { isChecked ->
+                                // State handled by PollinationsConfigCard & PollinationsImageManager
                             }
-                        },
-                        label = {
-                            Text(
-                                if (existingKey == null) {
-                                    AppStrings.tr("הדבק או הקלד מפתח API כאן", "Paste or type API Key here")
-                                } else {
-                                    AppStrings.tr("מפתח API (שמור ומוצפן בחומרה 🔒)", "API Key (Hardware Encrypted 🔒)")
+                        )
+                    } else {
+                        // 1. TOP ELEMENT: API Key input - AUTO-DETECTS PROVIDER & FETCHES MODELS AUTOMATICALLY
+                        Text(
+                            text = AppStrings.tr(
+                                "1. הזנת מפתח API (מזהה ספק ומודלים אוטומטית מיד עם ההזנה):",
+                                "1. Enter API Key (Auto-detects provider & models immediately):"
+                            ),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        OutlinedTextField(
+                            value = apiKeyText,
+                            onValueChange = { newText ->
+                                val trimmed = newText.trim()
+                                apiKeyText = trimmed
+                                errorMessage = null
+
+                                val detected = ProviderType.detectProviderFromKey(trimmed, name)
+                                if (detected != null) {
+                                    applyProviderChange(detected, isAutoDetected = true)
                                 }
-                            )
-                        },
-                        placeholder = {
-                            Text(
-                                if (existingKey == null) selectedProvider.keyHint
-                                else AppStrings.tr(
-                                    "•••••••••••••••••••• (שמור - הזן חדש לדריסה בלבד)",
-                                    "•••••••••••••••••••• (Saved - enter new key to overwrite)"
+                            },
+                            label = {
+                                Text(
+                                    if (existingKey == null) {
+                                        AppStrings.tr("הדבק או הקלד מפתח API כאן", "Paste or type API Key here")
+                                    } else {
+                                        AppStrings.tr("מפתח API (שמור ומוצפן בחומרה 🔒)", "API Key (Hardware Encrypted 🔒)")
+                                    }
                                 )
-                            )
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        trailingIcon = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                modifier = Modifier.padding(end = 4.dp)
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        val pasted = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
-                                        if (pasted.isNotBlank()) {
-                                            apiKeyText = pasted
-                                            errorMessage = null
-                                            val detected = ProviderType.detectProviderFromKey(pasted, name)
-                                            if (detected != null) {
-                                                applyProviderChange(detected, isAutoDetected = true)
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.size(32.dp)
+                            },
+                            placeholder = {
+                                Text(
+                                    if (existingKey == null) selectedProvider.keyHint
+                                    else AppStrings.tr(
+                                        "•••••••••••••••••••• (שמור - הזן חדש לדריסה בלבד)",
+                                        "•••••••••••••••••••• (Saved - enter new key to overwrite)"
+                                    )
+                                )
+                            },
+                            visualTransformation = PasswordVisualTransformation(),
+                            trailingIcon = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    modifier = Modifier.padding(end = 4.dp)
                                 ) {
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            val pasted = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                                            if (pasted.isNotBlank()) {
+                                                apiKeyText = pasted
+                                                errorMessage = null
+                                                val detected = ProviderType.detectProviderFromKey(pasted, name)
+                                                if (detected != null) {
+                                                    applyProviderChange(detected, isAutoDetected = true)
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentPaste,
+                                            contentDescription = AppStrings.tr("הדבק מפתח מהלוח", "Paste key from clipboard"),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                     Icon(
-                                        imageVector = Icons.Default.ContentPaste,
-                                        contentDescription = AppStrings.tr("הדבק מפתח מהלוח", "Paste key from clipboard"),
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = AppStrings.tr("המפתח חסוי ומוצפן תמיד", "Key is always masked and encrypted"),
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = AppStrings.tr("המפתח חסוי ומוצפן תמיד", "Key is always masked and encrypted"),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        },
-                        singleLine = true,
-                        isError = errorMessage != null,
-                        supportingText = {
-                            if (errorMessage != null) {
-                                Text(errorMessage!!, color = MaterialTheme.colorScheme.error)
-                            } else if (existingKey != null) {
-                                Text(
-                                    AppStrings.tr(
-                                        "המפתח שמור ומוצפן (AES-256 GCM). השאר ריק לשמירתו, או הקלד מפתח חדש לדריסה.",
-                                        "Key is saved & encrypted (AES-256 GCM). Leave blank to keep it, or type a new key to overwrite."
-                                    ),
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                            } else {
-                                Text(
-                                    AppStrings.tr(
-                                        "ברגע שתדביק מפתח, הספק, הכינוי ורשימת המודלים יתעדכנו אוטומטית (מוצפן AES-256 GCM)",
-                                        "As soon as you paste a key, the provider, nickname & model list update automatically"
-                                    ),
-                                    fontSize = 11.sp
-                                )
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("api_key_input")
-                    )
+                            },
+                            singleLine = true,
+                            isError = errorMessage != null,
+                            supportingText = {
+                                if (errorMessage != null) {
+                                    Text(errorMessage!!, color = MaterialTheme.colorScheme.error)
+                                } else if (existingKey != null) {
+                                    Text(
+                                        AppStrings.tr(
+                                            "המפתח שמור ומוצפן (AES-256 GCM). השאר ריק לשמירתו, או הקלד מפתח חדש לדריסה.",
+                                            "Key is saved & encrypted (AES-256 GCM). Leave blank to keep it, or type a new key to overwrite."
+                                        ),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                } else {
+                                    Text(
+                                        AppStrings.tr(
+                                            "ברגע שתדביק מפתח, הספק, הכינוי ורשימת המודלים יתעדכנו אוטומטית (מוצפן AES-256 GCM)",
+                                            "As soon as you paste a key, the provider, nickname & model list update automatically"
+                                        ),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("api_key_input")
+                        )
 
-                    if (selectedProvider != ProviderType.POLLINATIONS) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -862,8 +877,9 @@ fun AddKeyDialog(
                             .testTag("key_name_input")
                     )
 
-                    // 3. Model Selection Section (Free First + Best Quality)
-                    val currentModelId = customModelInput.ifBlank { selectedModel.ifBlank { selectedProvider.defaultModel } }
+                    if (selectedProvider != ProviderType.POLLINATIONS) {
+                        // 3. Model Selection Section (Free First + Best Quality)
+                        val currentModelId = customModelInput.ifBlank { selectedModel.ifBlank { selectedProvider.defaultModel } }
                     val currentModelInfo = modelsList.find { it.id == currentModelId } ?: AiModelInfo(id = currentModelId)
 
                     Text(
@@ -1588,6 +1604,7 @@ fun AddKeyDialog(
                             }
                         }
                     }
+                }
 
                     // Priority selector
                     Row(

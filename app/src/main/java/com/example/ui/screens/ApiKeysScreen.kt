@@ -98,7 +98,6 @@ import com.example.ui.components.CenteredMenuOption
 import com.example.ui.components.CenteredSelectionMenuDialog
 import com.example.ui.components.DragHandleBadge
 import com.example.ui.components.DraggableReorderColumn
-import com.example.ui.components.PollinationsConfigCard
 import com.example.ui.dialogs.AddKeyDialog
 import com.example.ui.viewmodel.NotifAiViewModel
 import com.example.util.AppStrings
@@ -515,31 +514,6 @@ fun ApiKeysScreen(
                 }
             }
         }
-
-        // Built-in Default Pollinations Image Generator Card (Works out-of-the-box without API key)
-        PollinationsConfigCard(
-            modifier = Modifier.padding(bottom = 12.dp),
-            initiallyExpanded = false,
-            hasActiveGeminiKeyInRepo = apiKeys.any { it.provider == ProviderType.GEMINI && it.isEnabled },
-            onModelChanged = { chosenModel ->
-                val builtIn = apiKeys.find { it.id == AiRepository.BUILTIN_POLLINATIONS_KEY_ID || it.provider == ProviderType.POLLINATIONS }
-                if (builtIn != null) {
-                    viewModel.addOrUpdateApiKey(
-                        id = builtIn.id,
-                        provider = ProviderType.POLLINATIONS,
-                        name = builtIn.name,
-                        rawKey = "",
-                        model = chosenModel,
-                        priority = builtIn.priority,
-                        temperature = builtIn.temperature,
-                        maxTokens = builtIn.maxTokens,
-                        systemPrompt = builtIn.systemPrompt,
-                        supportedTasks = builtIn.supportedTasks,
-                        fallbackModels = builtIn.fallbackModels
-                    )
-                }
-            }
-        )
 
         // Sub-header with Add / Configure button
         Row(

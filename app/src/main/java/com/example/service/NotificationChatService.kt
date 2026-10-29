@@ -12,7 +12,12 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -335,8 +340,12 @@ class NotificationChatService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            val largeAvatar = getCircularAppIconBitmap()
             val audioNotif = NotificationCompat.Builder(this, CHANNEL_AUDIO_ID)
                 .setSmallIcon(R.drawable.ic_stat_notifai_bell)
+                .apply {
+                    if (largeAvatar != null) setLargeIcon(largeAvatar)
+                }
                 .setContentTitle(AppStrings.tr("🔊 מנגן שמע מ-NotifAI", "🔊 Playing Audio from NotifAI"))
                 .setContentText(
                     latestAttachmentName ?: AppStrings.tr(
@@ -533,9 +542,7 @@ class NotificationChatService : Service() {
             }
         }
 
-        val largeAvatar = try {
-            BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset)
-        } catch (_: Exception) { null }
+        val largeAvatar = getCircularAppIconBitmap()
 
         // Check if the latest AI response includes an image to display directly inside the notification (Task #7 & #37)
         val generatedImageBitmap: Bitmap? = if (!isThinking && latestAttachmentUri != null && latestAttachmentMimeType?.startsWith("image/") == true) {
@@ -588,6 +595,29 @@ class NotificationChatService : Service() {
             .addAction(actionsButtonAction)
 
         return builder.build()
+    }
+
+    private fun getCircularAppIconBitmap(): Bitmap? {
+        return try {
+            val raw = BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset) ?: return null
+            val size = minOf(raw.width, raw.height).coerceAtMost(256)
+            val scaled = Bitmap.createScaledBitmap(raw, size, size, true)
+            val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            val rect = Rect(0, 0, size, size)
+            canvas.drawARGB(0, 0, 0, 0)
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+            canvas.drawBitmap(scaled, rect, rect, paint)
+            output
+        } catch (_: Exception) {
+            try {
+                BitmapFactory.decodeResource(resources, R.drawable.ic_launcher_custom_asset)
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     private fun createNotificationChannels() {

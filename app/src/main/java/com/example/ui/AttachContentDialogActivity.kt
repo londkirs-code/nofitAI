@@ -30,6 +30,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -127,9 +128,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -137,6 +140,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import com.example.NotifAiApplication
+import com.example.R
 import com.example.data.model.AiModelInfo
 import com.example.data.model.AiTaskType
 import com.example.data.model.ApiKeyEntity
@@ -339,31 +343,39 @@ fun AttachContentDialogScreen(
                         }
 
                         Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.colorScheme.tertiary
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
+                            modifier = Modifier.size(44.dp),
+                            contentAlignment = Alignment.BottomEnd
                         ) {
-                            Icon(
-                                imageVector = when (currentMode) {
-                                    AttachDialogMode.MENU -> Icons.Default.AttachFile
-                                    AttachDialogMode.ACTIONS -> Icons.Default.Settings
-                                    AttachDialogMode.VOICE_RECORD -> Icons.Default.Mic
-                                    AttachDialogMode.SPEECH_TO_TEXT -> Icons.Default.RecordVoiceOver
-                                    AttachDialogMode.FILE_SELECTED -> Icons.Default.InsertDriveFile
-                                },
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(22.dp)
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_launcher_custom_asset),
+                                contentDescription = "NotifAI",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
                             )
+                            Box(
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .border(1.dp, MaterialTheme.colorScheme.surface, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = when (currentMode) {
+                                        AttachDialogMode.MENU -> Icons.Default.AttachFile
+                                        AttachDialogMode.ACTIONS -> Icons.Default.Settings
+                                        AttachDialogMode.VOICE_RECORD -> Icons.Default.Mic
+                                        AttachDialogMode.SPEECH_TO_TEXT -> Icons.Default.RecordVoiceOver
+                                        AttachDialogMode.FILE_SELECTED -> Icons.Default.InsertDriveFile
+                                    },
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
                         }
 
                         Column {
@@ -1010,21 +1022,6 @@ private fun ActionsPopupSection(
                     )
                 }
             }
-
-            // Built-in Pollinations Image Generator Controls (Ratio 1:1/3:4/4:3/9:16/16:9, Count 1-4, Auto-Translate, Modesty & Filtering)
-            com.example.ui.components.PollinationsConfigCard(
-                modifier = Modifier.padding(top = 6.dp),
-                initiallyExpanded = preferredOutputType == AiTaskType.IMAGE_GEN,
-                hasActiveGeminiKeyInRepo = allKeys.any { it.provider == com.example.data.model.ProviderType.GEMINI && it.isEnabled },
-                onModelChanged = { chosenModel ->
-                    val builtIn = allKeys.find { it.id == AiRepository.BUILTIN_POLLINATIONS_KEY_ID || it.provider == com.example.data.model.ProviderType.POLLINATIONS }
-                    if (builtIn != null && repository != null) {
-                        scope.launch {
-                            repository.updateKeyEntity(builtIn.copy(selectedModel = chosenModel))
-                        }
-                    }
-                }
-            )
         }
 
         // Per-Task Dedicated Key & Model Routing directly inside 'פעולות' (Task #2)

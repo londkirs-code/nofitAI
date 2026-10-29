@@ -60,6 +60,7 @@ class AiRepository(
     suspend fun ensureBuiltInPollinationsKey() {
         val existing = apiKeyDao.getKeyById(BUILTIN_POLLINATIONS_KEY_ID)
         val selectedModel = PollinationsImageManager.getSelectedModel(context)
+        val isEnabled = PollinationsImageManager.isEngineEnabled(context)
         if (existing == null) {
             val builtInKey = ApiKeyEntity(
                 id = BUILTIN_POLLINATIONS_KEY_ID,
@@ -67,19 +68,14 @@ class AiRepository(
                 name = "Pollinations AI (מובנה - ללא מפתח)",
                 encryptedKey = "",
                 selectedModel = selectedModel,
-                priority = 1,
-                isEnabled = true,
+                priority = 999,
+                isEnabled = isEnabled, // Disabled (false) by default
                 supportedTasks = AiTaskType.IMAGE_GEN.name,
                 fallbackModels = "flux-realism,flux-3d,turbo"
             )
             apiKeyDao.insertOrUpdate(builtInKey)
-        } else if (existing.selectedModel != selectedModel) {
-            apiKeyDao.update(existing.copy(selectedModel = selectedModel))
-        }
-        val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
-        val dedicatedKeyPref = PREF_DEDICATED_KEY_PREFIX + AiTaskType.IMAGE_GEN.name
-        if (!prefs.contains(dedicatedKeyPref)) {
-            prefs.edit().putString(dedicatedKeyPref, BUILTIN_POLLINATIONS_KEY_ID).apply()
+        } else if (existing.isEnabled != isEnabled || existing.selectedModel != selectedModel) {
+            apiKeyDao.update(existing.copy(isEnabled = isEnabled, selectedModel = selectedModel))
         }
     }
 
@@ -112,36 +108,43 @@ class AiRepository(
     }
 
     /**
-     * Infers the effective task type from the user's prompt, attachment, and requested output mode (Tasks #2, #6, #16, #37).
+     * Infers the effective task type from the user's prompt, attachment, and requested output mode (Tasks #2, #6, #16, #37, #38).
+     * Automatically routes short messages (up to 300 characters) containing image trigger terms in any language to IMAGE_GEN.
      */
     fun resolveRequiredTaskType(
         prompt: String,
         attachment: AttachmentData?,
         requestedOutputType: AiTaskType = AiTaskType.TEXT
     ): AiTaskType {
-        if (requestedOutputType != AiTaskType.TEXT) {
-            return requestedOutputType
-        }
         if (attachment != null) {
             return when {
                 attachment.mimeType.startsWith("image/") -> AiTaskType.IMAGE_INPUT
                 else -> AiTaskType.FILE_INPUT
             }
         }
+        if (requestedOutputType == AiTaskType.IMAGE_GEN) {
+            return AiTaskType.IMAGE_GEN
+        }
+        // Automatic short-message (up to 300 chars) multi-language image generation trigger
+        // Per user requirement: strictly active ONLY when engine is enabled or explicit trigger exists
+        if (PollinationsImageManager.isEngineEnabled(context) && PollinationsImageManager.isShortMessageAutoImageTrigger(prompt)) {
+            return AiTaskType.IMAGE_GEN
+        }
+        if (requestedOutputType != AiTaskType.TEXT) {
+            return requestedOutputType
+        }
         val lower = prompt.lowercase()
-        val isImageGenPrompt = listOf(
-            "צור תמונה", "צייר", "ייצר תמונה", "תמונה של", "generate image", "draw ", "create an image",
-            "הכן תמונה", "תכין תמונה", "איור של", "ציור של", "צילום של", "צור איור", "image of", "photo of", "illustration of"
-        ).any { lower.contains(it) }
-        if (isImageGenPrompt) return AiTaskType.IMAGE_GEN
-
         val isAudioGenPrompt = listOf(
-            "צור סאונד", "צור שיר", "הקרא בקול", "צור שמע", "generate audio", "text to speech"
+            "צור סאונד", "צור שיר", "הקרא בקול", "צור שמע", "generate audio", "text to speech",
+            "أنشئ صوت", "создай аудио", "genera audio", "génère un audio", "erstelle audio",
+            "gere áudio", "生成音频", "音声を生成", "ses oluştur", "genera audio"
         ).any { lower.contains(it) }
         if (isAudioGenPrompt) return AiTaskType.AUDIO_GEN
 
         val isVideoGenPrompt = listOf(
-            "צור וידאו", "ייצר וידאו", "צור סרטון", "generate video"
+            "צור וידאו", "ייצר וידאו", "צור סרטון", "generate video",
+            "أنشئ فيديو", "создай видео", "genera un video", "génère une vidéo", "erstelle ein video",
+            "gere um vídeo", "生成视频", "動画を生成", "video oluştur", "genera un video"
         ).any { lower.contains(it) }
         if (isVideoGenPrompt) return AiTaskType.VIDEO_GEN
 
@@ -200,15 +203,8 @@ class AiRepository(
             null
         }
 
-        val hasNonPollinationsKey = allEnabledKeys.any { it.provider != ProviderType.POLLINATIONS }
         val effectiveOutputType = requestedOutputType ?: getPreferredOutputType(context)
-        val requiredTask = if (!hasNonPollinationsKey && attachment == null) {
-            // If only the built-in Pollinations image model is enabled (no external keys entered),
-            // route directly as IMAGE_GEN (which filters general questions politely and creates images for descriptions)
-            AiTaskType.IMAGE_GEN
-        } else {
-            resolveRequiredTaskType(prompt, attachment, effectiveOutputType)
-        }
+        val requiredTask = resolveRequiredTaskType(prompt, attachment, effectiveOutputType)
 
         val priorMessages = chatDao.getMessagesForConversation(conv.id)
             .filter { it.role == "user" || it.role == "assistant" }
@@ -258,6 +254,7 @@ class AiRepository(
         val matchingKeys = allEnabledKeys
             .filter { it.id != dedicatedKeyId && requiredTask in it.parsedSupportedTasks }
             .sortedBy { it.priority }
+        val hasNonPollinationsKey = allEnabledKeys.any { it.provider != ProviderType.POLLINATIONS }
         val otherFallbackKeys = allEnabledKeys
             .filter {
                 it.id != dedicatedKeyId &&
@@ -870,6 +867,10 @@ class AiRepository(
 
     suspend fun updateKeyEntity(entity: ApiKeyEntity) {
         apiKeyDao.update(entity)
+        if (entity.provider == ProviderType.POLLINATIONS || entity.id == BUILTIN_POLLINATIONS_KEY_ID) {
+            PollinationsImageManager.setEngineEnabled(context, entity.isEnabled)
+            PollinationsImageManager.setSelectedModel(context, entity.selectedModel)
+        }
     }
 
     suspend fun deleteKey(entity: ApiKeyEntity) {
@@ -1036,10 +1037,11 @@ class AiRepository(
         fun getDedicatedKeyIdForTask(context: Context, taskType: AiTaskType): String? {
             val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
             val key = PREF_DEDICATED_KEY_PREFIX + taskType.name
-            if (!prefs.contains(key) && taskType == AiTaskType.IMAGE_GEN) {
-                return BUILTIN_POLLINATIONS_KEY_ID
+            val saved = prefs.getString(key, null)?.takeIf { it.isNotBlank() }
+            if (saved == null && taskType == AiTaskType.IMAGE_GEN) {
+                return if (PollinationsImageManager.isEngineEnabled(context)) BUILTIN_POLLINATIONS_KEY_ID else null
             }
-            return prefs.getString(key, null)?.takeIf { it.isNotBlank() }
+            return saved
         }
 
         fun setDedicatedKeyIdForTask(context: Context, taskType: AiTaskType, keyId: String?) {

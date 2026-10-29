@@ -7,7 +7,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,6 +72,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
+import com.example.R
 import com.example.service.NotificationChatService
 import com.example.ui.AttachContentDialogActivity
 import com.example.ui.viewmodel.NotifAiViewModel
@@ -136,21 +141,33 @@ fun NotificationCenterScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        IconButton(
-                            onClick = { onRequestActivateNotification() },
+                        Box(
                             modifier = Modifier
-                                .size(44.dp)
-                                .background(
-                                    if (isServiceActive) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceContainer,
-                                    CircleShape
-                                )
+                                .size(48.dp)
+                                .clickable { onRequestActivateNotification() },
+                            contentAlignment = Alignment.BottomEnd
                         ) {
-                            Icon(
-                                imageVector = if (isServiceActive) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
-                                contentDescription = AppStrings.tr("הפעל התראה"),
-                                tint = if (isServiceActive) MaterialTheme.colorScheme.primary else Color.Gray,
-                                modifier = Modifier.size(24.dp)
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_launcher_custom_asset),
+                                contentDescription = AppStrings.tr("הפעל התראה", "Enable Notification"),
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .border(
+                                        width = 1.5.dp,
+                                        color = if (isServiceActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                                        shape = CircleShape
+                                    )
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .background(
+                                        if (isServiceActive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                                        CircleShape
+                                    )
+                                    .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
                             )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
@@ -391,11 +408,6 @@ fun NotificationCenterScreen(
                         }
                     }
                 }
-
-                com.example.ui.components.PollinationsConfigCard(
-                    initiallyExpanded = false,
-                    hasActiveGeminiKeyInRepo = apiKeys.any { it.provider == com.example.data.model.ProviderType.GEMINI && it.isEnabled }
-                )
 
                 OutlinedTextField(
                     value = testQueryInput,

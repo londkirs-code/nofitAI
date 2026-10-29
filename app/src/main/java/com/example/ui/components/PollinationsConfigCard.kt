@@ -3,6 +3,8 @@ package com.example.ui.components
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -38,7 +41,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,10 +52,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.model.ProviderType
 import com.example.util.AppStrings
 import com.example.util.PollinationsAspectRatio
@@ -60,12 +69,14 @@ import com.example.util.PollinationsImageManager
 @Composable
 fun PollinationsConfigCard(
     modifier: Modifier = Modifier,
-    initiallyExpanded: Boolean = false,
+    initiallyExpanded: Boolean = true,
     hasActiveGeminiKeyInRepo: Boolean = false,
-    onModelChanged: ((String) -> Unit)? = null
+    onModelChanged: ((String) -> Unit)? = null,
+    onEngineEnabledChanged: ((Boolean) -> Unit)? = null
 ) {
     val context = LocalContext.current
     var expanded by remember { mutableStateOf(initiallyExpanded) }
+    var engineEnabled by remember { mutableStateOf(PollinationsImageManager.isEngineEnabled(context)) }
     var selectedRatio by remember { mutableStateOf(PollinationsImageManager.getAspectRatio(context)) }
     var selectedCount by remember { mutableIntStateOf(PollinationsImageManager.getImageCount(context)) }
     var selectedModel by remember { mutableStateOf(PollinationsImageManager.getSelectedModel(context)) }
@@ -77,21 +88,20 @@ fun PollinationsConfigCard(
     OutlinedCard(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+        border = BorderStroke(1.5.dp, if (engineEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.outlinedCardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+            containerColor = if (engineEnabled) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
         )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // Header with Engine Active Switch
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -99,38 +109,54 @@ fun PollinationsConfigCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Palette,
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_launcher_custom_asset),
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, if (engineEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = AppStrings.tr(
-                                "🎨 מחולל תמונות Pollinations מובנה (ללא צורך במפתח)",
-                                "🎨 Built-in Pollinations Image Generator (No Key Needed)"
+                                "🎨 מחולל תמונות Pollinations מובנה",
+                                "🎨 Built-in Pollinations Image Generator"
                             ),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (engineEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = AppStrings.tr(
-                                "יחס: ${selectedRatio.label} • כמות: $selectedCount תמונות • מודל: $selectedModel • הגנת צניעות וסינון מובנים",
-                                "Ratio: ${selectedRatio.label} • Count: $selectedCount • Model: $selectedModel • Built-in Modesty & Filter"
-                            ),
+                            text = if (engineEnabled) {
+                                AppStrings.tr(
+                                    "🟢 מנוע פעיל (יופעל בבחירת פלט תמונה או 'צור לי תמונה')",
+                                    "🟢 Active (Triggers on image output or 'generate image')"
+                                )
+                            } else {
+                                AppStrings.tr(
+                                    "⚪ כבוי כברירת מחדל (הבקשות נשלחות למודל הטקסט הרגיל)",
+                                    "⚪ Disabled by default (Requests route to text models)"
+                                )
+                            },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
+                            color = if (engineEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                            fontWeight = if (engineEnabled) FontWeight.SemiBold else FontWeight.Normal
                         )
                     }
                 }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = AppStrings.tr("פתח/סגור הגדרות תמונה", "Toggle image settings"),
-                    tint = MaterialTheme.colorScheme.primary
+
+                Switch(
+                    checked = engineEnabled,
+                    onCheckedChange = { isChecked ->
+                        engineEnabled = isChecked
+                        PollinationsImageManager.setEngineEnabled(context, isChecked)
+                        onEngineEnabledChanged?.invoke(isChecked)
+                    },
+                    modifier = Modifier.testTag("pollinations_engine_toggle")
                 )
             }
 
@@ -408,10 +434,12 @@ fun PollinationsConfigCard(
                             }
                             Text(
                                 text = AppStrings.tr(
-                                    "• הנחיית צניעות: כל בקשה נשלחת עם הוראה למנוע יצירת דמויות נשים ובנות. מותרים גברים, בנים וילדים קטנים עד גיל 6, ובמקרה אחר סצנה ללא אנשים.\n" +
+                                    "• זיהוי אוטומטי בהודעה קצרה (עד 300 תווים, בכל השפות): מונחים כמו 'צור לי תמונה', 'תמונה של', 'צייר לי', 'הכן תמונה', 'איור של', 'create an image', 'picture of' וכו' נשלחים אוטומטית למודל התמונה.\n" +
+                                        "• הנחיית צניעות: כל בקשה נשלחת עם הוראה למנוע יצירת דמויות נשים ובנות. מותרים גברים, בנים וילדים קטנים עד גיל 6, ובמקרה אחר סצנה ללא אנשים.\n" +
                                         "• סינון בקשות: ביצירת תמונה האפליקציה מסרבת בנימוס לשאלות כלליות שאינן תיאור תמונה.\n" +
                                         "• גלריה: לחיצה על כל תמונה מגדילה לתצוגה מלאה + כפתור הורדה לכל תמונה בנפרד.",
-                                    "• Modesty Instruction: Prevents generating women and girls. Allowed: men, boys, and children up to age 6; otherwise prefers a scene without people.\n" +
+                                    "• Auto-Detection in Short Messages (up to 300 chars, all languages): Phrases like 'create an image', 'picture of', 'draw me', 'צור לי תמונה', 'תמונה של', etc. automatically route to the image model.\n" +
+                                        "• Modesty Instruction: Prevents generating women and girls. Allowed: men, boys, and children up to age 6; otherwise prefers a scene without people.\n" +
                                         "• Request Filtering: Politely refuses general questions that are not image descriptions.\n" +
                                         "• Gallery: Tap any image to enlarge + individual download button for each image."
                                 ),

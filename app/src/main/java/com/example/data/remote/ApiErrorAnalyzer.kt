@@ -337,7 +337,7 @@ object ApiErrorAnalyzer {
 
         // 4. Server Overload (529, 503, overloaded) vs Server Error (500, 502, 504)
         if (code == 529 || code == 503 || combined.contains("overloaded") || combined.contains("capacity")) {
-            val duration = if (retryAfterSec > 0) retryAfterSec else 45L
+            val duration = if (retryAfterSec > 0) retryAfterSec else 5L
             val timeStr = ApiKeyEntity.formatDurationHe(duration)
             // Often overload is on the specific model (especially on OpenRouter / Gemini / Claude)
             val isModelSpecificOverload = combined.contains("model") || provider == ProviderType.OPENROUTER || provider == ProviderType.GEMINI
@@ -383,7 +383,7 @@ object ApiErrorAnalyzer {
         }
 
         if (code in 500..599) {
-            val duration = if (retryAfterSec > 0) retryAfterSec else 45L
+            val duration = if (retryAfterSec > 0) retryAfterSec else 5L
             val timeStr = ApiKeyEntity.formatDurationHe(duration)
             val summary = AppStrings.tr(
                 he = "🛠️ תקלת שרת ($code) [כל ה-API במפתח]: שרת ${provider.displayName} החזיר שגיאה פנימית. מושהה ל-$timeStr.",
