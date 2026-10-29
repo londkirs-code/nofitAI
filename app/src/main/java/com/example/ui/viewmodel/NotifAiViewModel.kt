@@ -120,7 +120,8 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         fallbackModels: String = "",
         customBaseUrl: String? = null,
         customProtocol: String = "OPENAI",
-        rememberOnDevice: Boolean = true
+        rememberOnDevice: Boolean = true,
+        isEnabled: Boolean? = null
     ) {
         viewModelScope.launch {
             repository.saveApiKey(
@@ -137,7 +138,8 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
                 fallbackModels = fallbackModels,
                 customBaseUrl = customBaseUrl,
                 customProtocol = customProtocol,
-                rememberOnDevice = rememberOnDevice
+                rememberOnDevice = rememberOnDevice,
+                isEnabled = isEnabled
             )
             val msg = if (rememberOnDevice) {
                 "המפתח נשמר והוצפן בחומרה בהצלחה! 🔒"
@@ -200,6 +202,18 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
     fun toggleKeyEnabled(entity: ApiKeyEntity) {
         viewModelScope.launch {
             repository.updateKeyEntity(entity.copy(isEnabled = !entity.isEnabled))
+        }
+    }
+
+    fun setAllKeysEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.setAllKeysEnabled(enabled)
+            Toast.makeText(
+                getApplication(),
+                if (enabled) com.example.util.AppStrings.tr("כל המפתחות הופעלו בהצלחה ✅", "All API keys enabled ✅")
+                else com.example.util.AppStrings.tr("כל המפתחות כובו ⏸️", "All API keys disabled ⏸️"),
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 

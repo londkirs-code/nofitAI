@@ -1,9 +1,10 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,10 +31,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -52,10 +57,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.example.util.AppStrings
+import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 /**
  * Interactive drag-and-drop vertical list that allows users to drag any item by its drag handle
- * (or drag modifier) to reorder priorities smoothly without Up/Down buttons.
+ * to reorder priorities smoothly with automatic edge-scrolling (top/bottom of screen) and
+ * guaranteed snap-to-nearest-slot on release so items never get stuck mid-drag.
  */
 @Composable
 fun <T> DraggableReorderColumn(
@@ -63,18 +71,132 @@ fun <T> DraggableReorderColumn(
     keySelector: (T) -> Any,
     onReorderFinished: (List<T>) -> Unit,
     modifier: Modifier = Modifier,
+    scrollState: ScrollState? = null,
     verticalSpacing: Dp = 10.dp,
     itemContent: @Composable (index: Int, item: T, isDragging: Boolean, dragHandleModifier: Modifier) -> Unit
 ) {
     var localItems by remember { mutableStateOf(items) }
-    var draggedIndex by remember { mutableIntStateOf(-1) }
+    var draggedKey by remember { mutableStateOf<Any?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    val itemHeights = remember { mutableStateMapOf<Int, Float>() }
-    val latestOnReorderFinished by rememberUpdatedState(onReorderFinished)
+    var activeFingerWindowY by remember { mutableFloatStateOf(-1f) }
 
+    val itemHeights = remember { mutableStateMapOf<Any, Float>() }
+    val itemWindowY = remember { mutableStateMapOf<Any, Float>() }
+    val latestOnReorderFinished by rememberUpdatedState(onReorderFinished)
+    val spacingPx = with(LocalDensity.current) { verticalSpacing.toPx() }
+    val view = LocalView.current
+
+    // Always keep localItems synced with external updates (e.g., toggling Switches, clearing suspensions)
     LaunchedEffect(items) {
-        if (draggedIndex == -1) {
+        if (draggedKey == null) {
             localItems = items
+        } else {
+            val byKey = items.associateBy { keySelector(it) }
+            val updated = localItems.mapNotNull { existing -> byKey[keySelector(existing)] }
+            val existingKeys = updated.map { keySelector(it) }.toSet()
+            val added = items.filter { keySelector(it) !in existingKeys }
+            localItems = updated + added
+        }
+    }
+
+    fun stepSwapIfNeeded(snapThresholdRatio: Float = 0.48f) {
+        val currentKey = draggedKey ?: return
+        var curIdx = localItems.indexOfFirst { keySelector(it) == currentKey }
+        if (curIdx !in localItems.indices) return
+
+        // Support multi-step swaps if dragged fast or auto-scrolled
+        var swapped = true
+        var safetyCounter = 0
+        while (swapped && safetyCounter < 15) {
+            swapped = false
+            safetyCounter++
+            curIdx = localItems.indexOfFirst { keySelector(it) == currentKey }
+            if (curIdx !in localItems.indices) break
+
+            val curHeight = (itemHeights[currentKey] ?: 96f).coerceAtLeast(40f)
+            if (dragOffsetY > 0f && curIdx < localItems.lastIndex) {
+                val nextKey = keySelector(localItems[curIdx + 1])
+                val nextHeight = (itemHeights[nextKey] ?: curHeight).coerceAtLeast(40f)
+                val stepDistance = (curHeight + nextHeight) * 0.5f + spacingPx
+                if (dragOffsetY > nextHeight * snapThresholdRatio) {
+                    val mut = localItems.toMutableList()
+                    val moved = mut.removeAt(curIdx)
+                    mut.add(curIdx + 1, moved)
+                    localItems = mut
+                    dragOffsetY -= stepDistance
+                    swapped = true
+                }
+            } else if (dragOffsetY < 0f && curIdx > 0) {
+                val prevKey = keySelector(localItems[curIdx - 1])
+                val prevHeight = (itemHeights[prevKey] ?: curHeight).coerceAtLeast(40f)
+                val stepDistance = (curHeight + prevHeight) * 0.5f + spacingPx
+                if (dragOffsetY < -prevHeight * snapThresholdRatio) {
+                    val mut = localItems.toMutableList()
+                    val moved = mut.removeAt(curIdx)
+                    mut.add(curIdx - 1, moved)
+                    localItems = mut
+                    dragOffsetY += stepDistance
+                    swapped = true
+                }
+            }
+        }
+    }
+
+    fun finishDragAndSnapCleanly() {
+        if (draggedKey != null) {
+            // Snap to nearest slot if dragged past 35% of neighbor before releasing
+            stepSwapIfNeeded(snapThresholdRatio = 0.35f)
+            draggedKey = null
+            dragOffsetY = 0f
+            activeFingerWindowY = -1f
+            latestOnReorderFinished(localItems)
+        } else {
+            dragOffsetY = 0f
+            activeFingerWindowY = -1f
+        }
+    }
+
+    // Continuous smooth auto-scroll when dragging near the top or bottom edge of the screen
+    LaunchedEffect(draggedKey, scrollState) {
+        val currentKey = draggedKey ?: return@LaunchedEffect
+        val scroller = scrollState ?: return@LaunchedEffect
+
+        while (draggedKey == currentKey) {
+            val fingerY = activeFingerWindowY
+            val viewportHeight = view.height.toFloat().coerceAtLeast(600f)
+            val topZone = viewportHeight * 0.22f
+            val bottomZone = viewportHeight * 0.78f
+
+            if (fingerY > 0f) {
+                if (fingerY < topZone && scroller.value > 0) {
+                    val intensity = ((topZone - fingerY) / topZone).coerceIn(0.15f, 1f)
+                    val delta = -26f * intensity
+                    val consumed = scroller.scrollBy(delta)
+                    if (abs(consumed) > 0.5f) {
+                        dragOffsetY += consumed
+                        stepSwapIfNeeded(0.45f)
+                    }
+                } else if (fingerY > bottomZone && scroller.value < scroller.maxValue) {
+                    val intensity = ((fingerY - bottomZone) / (viewportHeight - bottomZone)).coerceIn(0.15f, 1f)
+                    val delta = 26f * intensity
+                    val consumed = scroller.scrollBy(delta)
+                    if (abs(consumed) > 0.5f) {
+                        dragOffsetY += consumed
+                        stepSwapIfNeeded(0.45f)
+                    }
+                }
+            }
+            delay(16L)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (draggedKey != null) {
+                draggedKey = null
+                dragOffsetY = 0f
+                activeFingerWindowY = -1f
+            }
         }
     }
 
@@ -83,73 +205,60 @@ fun <T> DraggableReorderColumn(
         verticalArrangement = Arrangement.spacedBy(verticalSpacing)
     ) {
         localItems.forEachIndexed { index, item ->
-            val isDragging = index == draggedIndex
             val itemKey = keySelector(item)
+            key(itemKey) {
+                val isDragging = itemKey == draggedKey
 
-            val dragModifier = Modifier.pointerInput(itemKey, localItems.size) {
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        draggedIndex = localItems.indexOfFirst { keySelector(it) == itemKey }
-                        dragOffsetY = 0f
-                    },
-                    onDragEnd = {
-                        if (draggedIndex != -1) {
-                            draggedIndex = -1
-                            dragOffsetY = 0f
-                            latestOnReorderFinished(localItems)
-                        }
-                    },
-                    onDragCancel = {
-                        if (draggedIndex != -1) {
-                            draggedIndex = -1
-                            dragOffsetY = 0f
-                            latestOnReorderFinished(localItems)
-                        }
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        val curIdx = draggedIndex
-                        if (curIdx in localItems.indices) {
-                            dragOffsetY += dragAmount
-                            val curHeight = (itemHeights[curIdx] ?: 140f).coerceAtLeast(48f)
-
-                            if (dragOffsetY > curHeight * 0.55f && curIdx < localItems.lastIndex) {
-                                val nextHeight = (itemHeights[curIdx + 1] ?: curHeight).coerceAtLeast(48f)
-                                val mut = localItems.toMutableList()
-                                val moved = mut.removeAt(curIdx)
-                                mut.add(curIdx + 1, moved)
-                                localItems = mut
-                                draggedIndex = curIdx + 1
-                                dragOffsetY -= nextHeight * 0.85f
-                            } else if (dragOffsetY < -curHeight * 0.55f && curIdx > 0) {
-                                val prevHeight = (itemHeights[curIdx - 1] ?: curHeight).coerceAtLeast(48f)
-                                val mut = localItems.toMutableList()
-                                val moved = mut.removeAt(curIdx)
-                                mut.add(curIdx - 1, moved)
-                                localItems = mut
-                                draggedIndex = curIdx - 1
-                                dragOffsetY += prevHeight * 0.85f
+                val dragModifier = Modifier.pointerInput(itemKey) {
+                    try {
+                        detectVerticalDragGestures(
+                            onDragStart = { startOffset ->
+                                draggedKey = itemKey
+                                dragOffsetY = 0f
+                                val baseWinY = itemWindowY[itemKey] ?: 0f
+                                activeFingerWindowY = baseWinY + startOffset.y
+                            },
+                            onDragEnd = {
+                                finishDragAndSnapCleanly()
+                            },
+                            onDragCancel = {
+                                finishDragAndSnapCleanly()
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                if (draggedKey != itemKey) {
+                                    draggedKey = itemKey
+                                }
+                                dragOffsetY += dragAmount
+                                val baseWinY = itemWindowY[itemKey] ?: 0f
+                                activeFingerWindowY = baseWinY + dragOffsetY + change.position.y
+                                stepSwapIfNeeded(0.48f)
                             }
+                        )
+                    } finally {
+                        if (draggedKey == itemKey) {
+                            finishDragAndSnapCleanly()
                         }
                     }
-                )
-            }
+                }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .zIndex(if (isDragging) 10f else 0f)
-                    .onGloballyPositioned { coords ->
-                        itemHeights[index] = coords.size.height.toFloat()
-                    }
-                    .graphicsLayer {
-                        translationY = if (isDragging) dragOffsetY else 0f
-                        scaleX = if (isDragging) 1.02f else 1f
-                        scaleY = if (isDragging) 1.02f else 1f
-                        shadowElevation = if (isDragging) 18f else 0f
-                    }
-            ) {
-                itemContent(index, item, isDragging, dragModifier)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .zIndex(if (isDragging) 12f else 0f)
+                        .onGloballyPositioned { coords ->
+                            itemHeights[itemKey] = coords.size.height.toFloat()
+                            itemWindowY[itemKey] = coords.positionInWindow().y
+                        }
+                        .graphicsLayer {
+                            translationY = if (isDragging) dragOffsetY else 0f
+                            scaleX = if (isDragging) 1.02f else 1f
+                            scaleY = if (isDragging) 1.02f else 1f
+                            shadowElevation = if (isDragging) 18f else 0f
+                        }
+                ) {
+                    itemContent(index, item, isDragging, dragModifier)
+                }
             }
         }
     }
@@ -163,10 +272,11 @@ fun DragHandleBadge(
     priorityNumber: Int,
     isDragging: Boolean,
     dragHandleModifier: Modifier,
-    labelText: String? = null
+    labelText: String? = null,
+    isCompact: Boolean = false
 ) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(if (isCompact) 8.dp else 10.dp),
         color = if (isDragging) {
             MaterialTheme.colorScheme.primary
         } else {
@@ -179,21 +289,28 @@ fun DragHandleBadge(
         modifier = dragHandleModifier
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(
+                horizontal = if (isCompact) 7.dp else 10.dp,
+                vertical = if (isCompact) 4.dp else 6.dp
+            ),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.DragIndicator,
                 contentDescription = AppStrings.tr("גרור לשינוי סדר עדיפות", "Drag to reorder priority"),
                 tint = if (isDragging) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(if (isCompact) 15.dp else 18.dp)
             )
             Text(
-                text = labelText ?: AppStrings.tr("גרור למיקום (#$priorityNumber)", "Drag (#$priorityNumber)"),
+                text = labelText ?: if (isCompact) {
+                    "#$priorityNumber"
+                } else {
+                    AppStrings.tr("גרור (#$priorityNumber)", "Drag (#$priorityNumber)")
+                },
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
+                fontSize = if (isCompact) 10.sp else 11.sp,
                 color = if (isDragging) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer
             )
         }

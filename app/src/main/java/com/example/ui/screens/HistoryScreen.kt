@@ -114,7 +114,7 @@ fun HistoryScreen(
             ) {
                 Column {
                     Text(
-                        text = AppStrings.tr("היסטוריית שיחות", "Chat History"),
+                        text = AppStrings.tr("שיחות", "Chats"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -146,7 +146,7 @@ fun HistoryScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text(AppStrings.tr("חיפוש בהיסטוריית השיחות...", "Search chat history...")) },
+                    placeholder = { Text(AppStrings.tr("חיפוש בשיחות...", "Search chats...")) },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     singleLine = true,
                     modifier = Modifier

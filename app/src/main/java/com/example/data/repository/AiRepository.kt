@@ -822,7 +822,8 @@ class AiRepository(
         fallbackModels: String = "",
         customBaseUrl: String? = null,
         customProtocol: String = "OPENAI",
-        rememberOnDevice: Boolean = true
+        rememberOnDevice: Boolean = true,
+        isEnabled: Boolean? = null
     ) {
         val targetId = id ?: UUID.randomUUID().toString()
         val existing = if (id != null) apiKeyDao.getKeyById(id) else null
@@ -845,6 +846,8 @@ class AiRepository(
                 CryptoEngine.encrypt(plainKey)
             }
         }
+        val resolvedEnabled = isEnabled ?: existing?.isEnabled ?: true
+        val resolvedModel = model.ifBlank { provider.defaultModel }
         val key = ApiKeyEntity(
             id = targetId,
             provider = provider,
@@ -853,9 +856,9 @@ class AiRepository(
                 else "${provider.displayName} #${priority}"
             },
             encryptedKey = encrypted,
-            selectedModel = model.ifBlank { provider.defaultModel },
+            selectedModel = resolvedModel,
             priority = priority,
-            isEnabled = existing?.isEnabled ?: true,
+            isEnabled = resolvedEnabled,
             temperature = temperature,
             maxTokens = maxTokens,
             systemPrompt = systemPrompt?.takeIf { it.isNotBlank() },
@@ -865,6 +868,20 @@ class AiRepository(
             customProtocol = customProtocol.ifBlank { "OPENAI" }
         )
         apiKeyDao.insertOrUpdate(key)
+        if (provider == ProviderType.POLLINATIONS || targetId == BUILTIN_POLLINATIONS_KEY_ID) {
+            PollinationsImageManager.setEngineEnabled(context, resolvedEnabled)
+            PollinationsImageManager.setSelectedModel(context, resolvedModel)
+        }
+    }
+
+    suspend fun setAllKeysEnabled(enabled: Boolean) {
+        val all = apiKeyDao.getAllKeys()
+        for (entity in all) {
+            apiKeyDao.update(entity.copy(isEnabled = enabled))
+            if (entity.provider == ProviderType.POLLINATIONS || entity.id == BUILTIN_POLLINATIONS_KEY_ID) {
+                PollinationsImageManager.setEngineEnabled(context, enabled)
+            }
+        }
     }
 
     /**
@@ -1109,6 +1126,38 @@ class AiRepository(
                 .edit()
                 .putString(PREF_DEDICATED_KEY_PREFIX + taskType.name, keyId ?: "")
                 .apply()
+        }
+
+        fun hasEnabledModelForOutputType(
+            context: Context,
+            keys: List<ApiKeyEntity>,
+            taskType: AiTaskType
+        ): Boolean {
+            if (taskType == AiTaskType.TEXT) {
+                return keys.any {
+                    it.isEnabled &&
+                        it.provider != ProviderType.POLLINATIONS &&
+                        (AiTaskType.TEXT in it.parsedSupportedTasks || it.parsedSupportedTasks.isEmpty())
+                }
+            }
+            val dedicatedId = getDedicatedKeyIdForTask(context, taskType)
+            if (!dedicatedId.isNullOrBlank()) {
+                val dedicatedKey = keys.find { it.id == dedicatedId }
+                if (dedicatedKey != null && dedicatedKey.isEnabled) {
+                    if (dedicatedKey.provider == ProviderType.POLLINATIONS) {
+                        return PollinationsImageManager.isEngineEnabled(context)
+                    }
+                    return true
+                }
+            }
+            return keys.any { key ->
+                if (!key.isEnabled) return@any false
+                if (key.provider == ProviderType.POLLINATIONS) {
+                    taskType == AiTaskType.IMAGE_GEN && PollinationsImageManager.isEngineEnabled(context)
+                } else {
+                    taskType in key.parsedSupportedTasks
+                }
+            }
         }
     }
 }

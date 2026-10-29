@@ -40,7 +40,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
@@ -119,6 +121,10 @@ fun AddKeyDialog(
     initialRawKey: String = "",
     onFetchDetailedModels: suspend (ProviderType, String) -> FetchModelsResponse,
     onFetchDetailedModelsForExistingKey: (suspend (String) -> FetchModelsResponse)? = null,
+    onClearSuspension: (() -> Unit)? = null,
+    onDuplicateKey: (() -> Unit)? = null,
+    onDeleteKey: (() -> Unit)? = null,
+    onToggleKeyEnabled: ((Boolean) -> Unit)? = null,
     onDismiss: () -> Unit,
     onSave: (
         provider: ProviderType,
@@ -133,11 +139,13 @@ fun AddKeyDialog(
         fallbackModels: String,
         customBaseUrl: String?,
         customProtocol: String,
-        rememberOnDevice: Boolean
+        rememberOnDevice: Boolean,
+        isEnabled: Boolean
     ) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val dialogScrollState = rememberScrollState()
 
     val initialDetectedProvider = remember(initialRawKey) {
         if (initialRawKey.isNotBlank()) ProviderType.detectProviderFromKey(initialRawKey.trim()) else null
@@ -147,6 +155,13 @@ fun AddKeyDialog(
     }
     var providerMenuDialogOpen by remember { mutableStateOf(false) }
     var autoDetectedProviderBadge by remember { mutableStateOf<ProviderType?>(initialDetectedProvider) }
+
+    var keyIsEnabled by remember(existingKey?.id) {
+        mutableStateOf(existingKey?.isEnabled ?: true)
+    }
+    var suspensionClearedInDialog by remember(existingKey?.id) {
+        mutableStateOf(false)
+    }
 
     var priority by remember { mutableIntStateOf(existingKey?.priority ?: nextPriority) }
     var name by remember {
@@ -182,7 +197,7 @@ fun AddKeyDialog(
             ?: emptyList()
         mutableStateOf(initialExtras)
     }
-    var showFallbackModelsSection by remember { mutableStateOf(enabledFallbackModels.isNotEmpty()) }
+    var showFallbackModelsSection by remember { mutableStateOf(true) }
 
     // Models state sorted with Free models first, then best paid models
     var modelsList by remember(selectedProvider) {
@@ -295,12 +310,16 @@ fun AddKeyDialog(
         }
     }
 
-    LaunchedEffect(existingKey?.id) {
+    fun refreshExistingKeyModels() {
+        if (apiKeyText.isNotBlank()) {
+            triggerLiveFetch(selectedProvider, apiKeyText)
+            return
+        }
         if (existingKey != null && onFetchDetailedModelsForExistingKey != null) {
             isFetchingModels = true
             fetchStatusMessage = AppStrings.tr(
-                "שולף אוטומטית את כל המודלים משרתי ${selectedProvider.displayName}...",
-                "Automatically fetching all models from ${selectedProvider.displayName}..."
+                "מרענן וסורק מודלים משרתי ${selectedProvider.displayName}...",
+                "Refreshing models from ${selectedProvider.displayName}..."
             )
             fetchStatusIsError = false
             fetchSuccessCount = null
@@ -322,8 +341,20 @@ fun AddKeyDialog(
                         selectedModel = best.id
                         customModelInput = best.id
                     }
+                } else {
+                    fetchStatusIsError = true
+                    fetchStatusMessage = result.errorMessage ?: AppStrings.tr(
+                        "לא ניתן היה לרענן מודלים מהשרת כעת.",
+                        "Could not refresh models from server right now."
+                    )
                 }
             }
+        }
+    }
+
+    LaunchedEffect(existingKey?.id) {
+        if (existingKey != null && onFetchDetailedModelsForExistingKey != null) {
+            refreshExistingKeyModels()
         }
     }
 
@@ -426,9 +457,183 @@ fun AddKeyDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .verticalScroll(dialogScrollState),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    // Quick Controls inside Edit Key Dialog (Enable/Disable, Timeout/Suspension Reset, Refresh, Duplicate, Delete)
+                    if (existingKey != null) {
+                        val now = System.currentTimeMillis()
+                        val isSuspendedNow = !suspensionClearedInDialog && (
+                            existingKey.isSuspended ||
+                                existingKey.parsedModelSuspensions.any { it.value > now } ||
+                                !existingKey.suspensionReason.isNullOrBlank()
+                            )
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSuspendedNow) MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+                                else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = AppStrings.tr("סטטוס מפתח ופעולות מהירות", "Key Status & Quick Actions"),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = if (keyIsEnabled) {
+                                                AppStrings.tr("🟢 המפתח פעיל ומוכן לשימוש", "🟢 Key is Enabled & Active")
+                                            } else {
+                                                AppStrings.tr("⏸️ המפתח כבוי כרגע", "⏸️ Key is Currently Disabled")
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (keyIsEnabled) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = keyIsEnabled,
+                                        onCheckedChange = { newEnabled ->
+                                            keyIsEnabled = newEnabled
+                                            onToggleKeyEnabled?.invoke(newEnabled)
+                                            if (selectedProvider == ProviderType.POLLINATIONS) {
+                                                PollinationsImageManager.setEngineEnabled(context, newEnabled)
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("dialog_key_enable_switch")
+                                    )
+                                }
+
+                                if (isSuspendedNow && !existingKey.suspensionReason.isNullOrBlank()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "⚠️ ${existingKey.suspensionReason}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(8.dp)
+                                        )
+                                    }
+                                }
+
+                                // Timeout / Suspension Reset + Refresh Models Row
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            suspensionClearedInDialog = true
+                                            onClearSuspension?.invoke()
+                                            Toast.makeText(
+                                                context,
+                                                AppStrings.tr("השהיית המפתח וחסימות Timeout אופסו בהצלחה! 🔄", "Key suspension & timeout blocks reset! 🔄"),
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("dialog_reset_timeout_btn"),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = AppStrings.tr("אפס השהיה / Timeout", "Reset Timeout / Cooldown"),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    if (selectedProvider != ProviderType.POLLINATIONS) {
+                                        OutlinedButton(
+                                            onClick = { refreshExistingKeyModels() },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("dialog_refresh_models_btn"),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = AppStrings.tr("רענן רשימת מודלים", "Refresh Models"),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Duplicate & Delete buttons inside Edit dialog
+                                if (onDuplicateKey != null || onDeleteKey != null) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        if (onDuplicateKey != null && selectedProvider != ProviderType.POLLINATIONS) {
+                                            OutlinedButton(
+                                                onClick = { onDuplicateKey.invoke() },
+                                                modifier = Modifier.weight(1f),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = AppStrings.tr("שכפל מפתח", "Duplicate Key"),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        if (onDeleteKey != null && selectedProvider != ProviderType.POLLINATIONS) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    onDeleteKey.invoke()
+                                                    onDismiss()
+                                                },
+                                                modifier = Modifier.weight(1f),
+                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                    contentColor = MaterialTheme.colorScheme.error
+                                                ),
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                                shape = RoundedCornerShape(10.dp)
+                                            ) {
+                                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = AppStrings.tr("מחק מפתח", "Delete Key"),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if (selectedProvider == ProviderType.POLLINATIONS) {
                         // Embedded Pollinations settings card directly inside Edit Key dialog
                         PollinationsConfigCard(
@@ -440,7 +645,8 @@ fun AddKeyDialog(
                                 customModelInput = chosenModel
                             },
                             onEngineEnabledChanged = { isChecked ->
-                                // State handled by PollinationsConfigCard & PollinationsImageManager
+                                keyIsEnabled = isChecked
+                                onToggleKeyEnabled?.invoke(isChecked)
                             }
                         )
                     } else {
@@ -1098,6 +1304,46 @@ fun AddKeyDialog(
 
                             AnimatedVisibility(visible = showFallbackModelsSection) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    // Quick bulk controls for fallback models
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                val topFree = modelsList
+                                                    .filter { it.id != currentModelId && it.effectivelyFree }
+                                                    .take(4)
+                                                    .map { it.id }
+                                                val additions = if (topFree.isNotEmpty()) topFree else modelsList.filter { it.id != currentModelId }.take(3).map { it.id }
+                                                enabledFallbackModels = (enabledFallbackModels + additions).distinct()
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = AppStrings.tr("✨ הפעל מודלי גיבוי מומלצים", "✨ Enable Recommended Fallbacks"),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        if (enabledFallbackModels.isNotEmpty()) {
+                                            OutlinedButton(
+                                                onClick = { enabledFallbackModels = emptyList() },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = AppStrings.tr("כבה הכל", "Disable All"),
+                                                    fontSize = 10.sp,
+                                                    color = MaterialTheme.colorScheme.error,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+
                                     if (enabledFallbackModels.isNotEmpty()) {
                                         Text(
                                             text = AppStrings.tr(
@@ -1115,7 +1361,8 @@ fun AddKeyDialog(
                                             onReorderFinished = { newOrder ->
                                                 enabledFallbackModels = newOrder
                                             },
-                                            verticalSpacing = 6.dp
+                                            verticalSpacing = 6.dp,
+                                            scrollState = dialogScrollState
                                         ) { idx, fallbackId, isDragging, dragModifier ->
                                             Surface(
                                                 color = if (isDragging) {
@@ -1153,6 +1400,22 @@ fun AddKeyDialog(
                                                             style = MaterialTheme.typography.bodySmall,
                                                             fontWeight = FontWeight.Bold,
                                                             modifier = Modifier.weight(1f)
+                                                        )
+                                                    }
+                                                    TextButton(
+                                                        onClick = {
+                                                            val oldPrimary = currentModelId
+                                                            selectedModel = fallbackId
+                                                            customModelInput = fallbackId
+                                                            enabledFallbackModels = listOf(oldPrimary) + enabledFallbackModels.filter { it != fallbackId && it != oldPrimary }
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                                        modifier = Modifier.height(28.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = AppStrings.tr("⭐ ראשי", "⭐ Primary"),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
                                                         )
                                                     }
                                                     Switch(
@@ -1673,7 +1936,8 @@ fun AddKeyDialog(
                             enabledFallbackModels.filter { it != finalModel }.joinToString(","),
                             customBaseUrl.trim().takeIf { it.isNotBlank() },
                             customProtocol,
-                            rememberKeyOnDevice
+                            rememberKeyOnDevice,
+                            keyIsEnabled
                         )
                     },
                     modifier = Modifier.testTag("save_api_key_btn"),

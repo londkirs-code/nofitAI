@@ -482,6 +482,7 @@ class NotificationChatService : Service() {
         val attachDialogIntent = Intent(this, AttachContentDialogActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ATTACH)
+            putExtra(AttachContentDialogActivity.EXTRA_FROM_NOTIFICATION, true)
         }
         val attachDialogPendingIntent = PendingIntent.getActivity(
             this,
@@ -493,12 +494,15 @@ class NotificationChatService : Service() {
             android.R.drawable.ic_input_add,
             AppStrings.tr("✨ שלח תוכן", "✨ Send Content"),
             attachDialogPendingIntent
-        ).build()
+        )
+            .setShowsUserInterface(false)
+            .build()
 
         // 3. Actions Popup Dialog Action ("⚙️ פעולות")
         val actionsDialogIntent = Intent(this, AttachContentDialogActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(AttachContentDialogActivity.EXTRA_INITIAL_MODE, AttachContentDialogActivity.MODE_ACTIONS)
+            putExtra(AttachContentDialogActivity.EXTRA_FROM_NOTIFICATION, true)
         }
         val actionsDialogPendingIntent = PendingIntent.getActivity(
             this,
@@ -510,7 +514,9 @@ class NotificationChatService : Service() {
             android.R.drawable.ic_menu_manage,
             AppStrings.tr("⚙️ פעולות", "⚙️ Actions"),
             actionsDialogPendingIntent
-        ).build()
+        )
+            .setShowsUserInterface(false)
+            .build()
 
         // Content Click -> Full Conversation Dialog (ChatDialogActivity)
         val activeConvId = (application as? NotifAiApplication)?.aiRepository?.getActiveConversationId()

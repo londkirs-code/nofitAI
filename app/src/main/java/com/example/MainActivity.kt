@@ -33,12 +33,14 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Notifications
@@ -101,7 +103,7 @@ enum class NavTab(
 ) {
     NOTIFICATION(Icons.Filled.NotificationsActive, Icons.Outlined.Notifications, "nav_notification"),
     KEYS(Icons.Filled.Key, Icons.Outlined.Key, "nav_keys"),
-    HISTORY(Icons.Filled.History, Icons.Outlined.History, "nav_history"),
+    HISTORY(Icons.Filled.Forum, Icons.Outlined.Forum, "nav_history"),
     SECURITY(Icons.Filled.Settings, Icons.Outlined.Settings, "nav_security");
 
     fun localizedTitle(): String = when (this) {

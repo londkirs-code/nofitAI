@@ -172,11 +172,17 @@ object AppStrings {
             Lang.PT to "Chaves API", Lang.ZH to "API 密钥", Lang.JA to "APIキー",
             Lang.TR to "API Anahtarları", Lang.IT to "Chiavi API"
         ),
+        "שיחות" to mapOf(
+            Lang.EN to "Chats", Lang.AR to "المحادثات", Lang.RU to "Чаты",
+            Lang.ES to "Chats", Lang.FR to "Discussions", Lang.DE to "Chats",
+            Lang.PT to "Conversas", Lang.ZH to "对话", Lang.JA to "チャット",
+            Lang.TR to "Sohbetler", Lang.IT to "Chat"
+        ),
         "היסטוריה" to mapOf(
-            Lang.EN to "History", Lang.AR to "السجل", Lang.RU to "История",
-            Lang.ES to "Historial", Lang.FR to "Historique", Lang.DE to "Verlauf",
-            Lang.PT to "Histórico", Lang.ZH to "历史记录", Lang.JA to "履歴",
-            Lang.TR to "Geçmiş", Lang.IT to "Cronologia"
+            Lang.EN to "Chats", Lang.AR to "المحادثات", Lang.RU to "Чаты",
+            Lang.ES to "Chats", Lang.FR to "Discussions", Lang.DE to "Chats",
+            Lang.PT to "Conversas", Lang.ZH to "对话", Lang.JA to "チャット",
+            Lang.TR to "Sohbetler", Lang.IT to "Chat"
         ),
         "הגדרות" to mapOf(
             Lang.EN to "Settings", Lang.AR to "الإعدادات", Lang.RU to "Настройки",
@@ -549,7 +555,7 @@ object AppStrings {
         get() = tr("מפתחות")
 
     val tabHistory: String
-        get() = tr("היסטוריה")
+        get() = tr("שיחות")
 
     val tabSettings: String
         get() = tr("הגדרות")

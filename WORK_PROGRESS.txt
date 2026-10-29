@@ -219,3 +219,22 @@
       * הפרדת לחיצה על מדיה מול בועת ההתראה: בהתראה הראשית נוסף כפתור פעולה ייעודי עבור קובצי מדיה מצורפים ("🖼️ פתח תמונה", "🎬 נגן וידאו", "▶️ נגן שמע", "📄 פתח קובץ") הפותח או מנגן ישירות את קובץ המדיה שנבחר, בעוד לחיצה על שאר הבועה, הטקסט או כרטיס ההתראה פותחת את מסך הצ'אט המלא (`ChatDialogActivity`). גם בחלון התצוגה המקדימה ב'פעולות', לחיצה על פריט המדיה פותחת אותו, ולחיצה מסביב על הכרטיס פותחת את הצ'אט.
 ================================================================================
 
+
+Task #43 (Smooth Auto-Scrolling Drag-and-Drop, Master Switch, Compact Keys View, Full-Card Click to Edit, All Key Controls Inside Edit Dialog, Keep Notification Shade Open on Actions, Missing Output Model Warning, "שיחות" Tab Rename & New AI Robot Bell App/Notification Icon):
+- Smooth Drag-and-Drop (`ReorderableComponents.kt`):
+  - Wrapped items in `key(itemKey)` so swapping items during drag never cancels the active pointerInput coroutine.
+  - Added continuous auto-scrolling (`scrollState`) when dragging near the top or bottom edges of the screen.
+  - Added guaranteed `finally` and `DisposableEffect` cleanup so dragged items immediately snap into the nearest slot and never get stuck mid-drag.
+- Master Switch & Compact View (`ApiKeysScreen.kt`, `AttachContentDialogActivity.kt`, `AiRepository.kt`, `NotifAiViewModel.kt`):
+  - Added a Master Switch ("כל המפתחות יחד") to enable or disable all API keys simultaneously.
+  - Added a Compact View toggle ("תצוגה מצומצמת") that displays compact, low-height key rows so many keys fit on screen comfortably.
+- Full-Card Clickable to Edit & All Controls Inside `AddKeyDialog.kt`:
+  - Clicking anywhere on a key card/row opens `AddKeyDialog` for editing.
+  - Added Enable/Disable switch, Reset Timeout/Cooldown (`onClearSuspension`), Refresh Models, Duplicate Key, and Delete Key inside `AddKeyDialog`, plus 1-click "⭐ ראשי" promotion and bulk fallback model controls.
+- Missing Output Model Warning:
+  - Switching the requested output type (e.g. Image, Audio, Video, File) checks `AiRepository.hasEnabledModelForOutputType(...)` and prompts the user if no active model is configured (with 1-click Pollinations activation for Image or opening model setup).
+- Notification Shade Preservation (`NotificationChatService.kt`, `AttachContentDialogActivity.kt`):
+  - Configured notification actions with `setShowsUserInterface(false)` and `keepNotificationShadeOpen` so opening Actions from the notification keeps the notification center open.
+- Renamed "היסטוריה" to "שיחות" across the app and all 12 languages in `AppStrings.kt`.
+- Updated the App Launcher Icon (all mipmap densities + `ic_launcher_custom_asset.png` + `#3322D3` background) and Notification Icon (`ic_stat_notifai_bell.xml`) with the new glowing AI Robot Bell icon.
+- Verified with `compile_applet` and updated `NotifAI.apk`.
