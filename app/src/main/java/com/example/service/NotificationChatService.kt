@@ -32,6 +32,7 @@ import com.example.receiver.NotificationActionReceiver
 import com.example.ui.AttachContentDialogActivity
 import com.example.ui.ChatDialogActivity
 import com.example.util.AppStrings
+import com.example.util.MediaStorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -111,10 +112,14 @@ class NotificationChatService : Service() {
                 }
                 serviceScope.launch {
                     try {
-                        (application as? NotifAiApplication)?.aiRepository?.createNewConversation()
+                        val repository = (application as? NotifAiApplication)?.aiRepository
+                        val newConv = repository?.createNewConversation()
+                        if (newConv != null) {
+                            repository.setActiveConversationId(newConv.id)
+                        }
                     } catch (_: Exception) {}
+                    updateMainNotification(isThinking = false)
                 }
-                updateMainNotification(isThinking = false)
             }
             ACTION_CLEAR_DISPLAY_ONLY -> {
                 // Task #21: Clear ONLY the text/media currently displayed in the notification WITHOUT resetting the conversation!
@@ -210,6 +215,52 @@ class NotificationChatService : Service() {
         }
 
         updateMainNotification(isThinking = true)
+
+        // Proactive offline check (Task #42): If no network is available, immediately respond without latency
+        if (!com.example.util.NetworkUtils.isNetworkAvailable(this)) {
+            val offlineMsg = com.example.util.NetworkUtils.getNoInternetErrorMessage()
+            latestFullResponse = offlineMsg
+            latestModelUsed = AppStrings.tr("אופליין", "Offline")
+            synchronized(chatHistory) {
+                chatHistory.add(
+                    DisplayMessage(
+                        senderName = "NotifAI",
+                        text = offlineMsg,
+                        timestamp = System.currentTimeMillis(),
+                        isBot = true
+                    )
+                )
+            }
+            _isProcessingFlow.value = false
+            updateMainNotification(isThinking = false)
+
+            serviceScope.launch {
+                try {
+                    val repository = (application as NotifAiApplication).aiRepository
+                    val conv = if (conversationId != null) {
+                        repository.chatDao.getConversationById(conversationId) ?: repository.getOrCreateActiveConversation()
+                    } else {
+                        repository.getOrCreateActiveConversation()
+                    }
+                    val userMsg = com.example.data.model.ChatMessageEntity(
+                        conversationId = conv.id,
+                        role = "user",
+                        content = displayUserText,
+                        timestamp = userTimestamp,
+                        attachmentUri = attachmentUri?.toString()
+                    )
+                    repository.chatDao.addMessageAndUpdateConversation(conv.id, userMsg, displayUserText)
+                    val assistantMsg = com.example.data.model.ChatMessageEntity(
+                        conversationId = conv.id,
+                        role = "assistant",
+                        content = offlineMsg,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    repository.chatDao.addMessageAndUpdateConversation(conv.id, assistantMsg, offlineMsg)
+                } catch (_: Exception) {}
+            }
+            return
+        }
 
         serviceScope.launch {
             val repository = (application as NotifAiApplication).aiRepository
@@ -462,8 +513,12 @@ class NotificationChatService : Service() {
         ).build()
 
         // Content Click -> Full Conversation Dialog (ChatDialogActivity)
+        val activeConvId = (application as? NotifAiApplication)?.aiRepository?.getActiveConversationId()
         val chatDialogIntent = Intent(this, ChatDialogActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (activeConvId != null) {
+                putExtra(ChatDialogActivity.EXTRA_CONVERSATION_ID, activeConvId)
+            }
         }
         val chatDialogPendingIntent = PendingIntent.getActivity(
             this,
@@ -593,6 +648,61 @@ class NotificationChatService : Service() {
             .addAction(replyAction)
             .addAction(sendContentAction)
             .addAction(actionsButtonAction)
+
+        // Separate Media Click (Task #42): Direct action to open image, video, audio or file directly
+        if (!latestAttachmentUri.isNullOrBlank()) {
+            val primaryMediaUri = latestAttachmentUri!!.substringBefore("|").trim()
+            val isAudio = latestAttachmentMimeType?.startsWith("audio/") == true
+            val isVideo = latestAttachmentMimeType?.startsWith("video/") == true
+            val isImage = latestAttachmentMimeType?.startsWith("image/") == true
+
+            if (isAudio) {
+                val playAudioIntent = Intent(this, NotificationActionReceiver::class.java).apply {
+                    action = ACTION_PLAY_AUDIO_IN_NOTIFICATION
+                    putExtra(EXTRA_ATTACHMENT_URI, primaryMediaUri)
+                }
+                val playPendingIntent = PendingIntent.getBroadcast(
+                    this,
+                    110,
+                    playAudioIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.addAction(
+                    android.R.drawable.ic_media_play,
+                    AppStrings.tr("▶️ נגן שמע", "▶️ Play Audio"),
+                    playPendingIntent
+                )
+            } else {
+                val viewIntent = MediaStorageManager.createViewMediaIntent(
+                    this,
+                    primaryMediaUri,
+                    latestAttachmentMimeType
+                )
+                if (viewIntent != null) {
+                    val viewPendingIntent = PendingIntent.getActivity(
+                        this,
+                        111,
+                        viewIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    val (iconRes, label) = when {
+                        isImage -> Pair(
+                            android.R.drawable.ic_menu_gallery,
+                            AppStrings.tr("🖼️ פתח תמונה", "🖼️ Open Image")
+                        )
+                        isVideo -> Pair(
+                            android.R.drawable.ic_media_play,
+                            AppStrings.tr("🎬 נגן וידאו", "🎬 Play Video")
+                        )
+                        else -> Pair(
+                            android.R.drawable.ic_menu_view,
+                            AppStrings.tr("📄 פתח קובץ", "📄 Open File")
+                        )
+                    }
+                    builder.addAction(iconRes, label, viewPendingIntent)
+                }
+            }
+        }
 
         return builder.build()
     }

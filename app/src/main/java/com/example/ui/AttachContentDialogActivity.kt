@@ -894,7 +894,19 @@ private fun ActionsPopupSection(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val intent = Intent(context, ChatDialogActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            val activeConvId = repository.getActiveConversationId()
+                            if (activeConvId != null) {
+                                putExtra(ChatDialogActivity.EXTRA_CONVERSATION_ID, activeConvId)
+                            }
+                        }
+                        context.startActivity(intent)
+                        onDismissPopup()
+                    }
             ) {
                 Column(
                     modifier = Modifier.padding(12.dp),

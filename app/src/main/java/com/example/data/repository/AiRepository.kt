@@ -42,8 +42,8 @@ data class QueryResult(
 )
 
 class AiRepository(
-    private val apiKeyDao: ApiKeyDao,
-    private val chatDao: ChatDao,
+    val apiKeyDao: ApiKeyDao,
+    val chatDao: ChatDao,
     private val context: Context,
     private val apiClient: AiApiClient = AiApiClient()
 ) {
@@ -79,31 +79,59 @@ class AiRepository(
         }
     }
 
+    fun getActiveConversationId(): Long? {
+        val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+        val id = prefs.getLong(PREF_ACTIVE_CONVERSATION_ID, -1L)
+        return if (id > 0) id else null
+    }
+
+    fun setActiveConversationId(id: Long) {
+        context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putLong(PREF_ACTIVE_CONVERSATION_ID, id)
+            .apply()
+    }
+
     /**
      * Gets or creates active conversation.
-     * Automatically starts a new conversation if last interaction was more than 3 hours ago.
+     * Automatically retrieves the active conversation or starts a new one if last interaction was more than 3 hours ago.
      */
     suspend fun getOrCreateActiveConversation(): ChatConversationEntity {
+        val activeId = getActiveConversationId()
+        if (activeId != null) {
+            val existing = chatDao.getConversationById(activeId)
+            if (existing != null && (System.currentTimeMillis() - existing.updatedAt) < 1000 * 60 * 60 * 3) {
+                return existing
+            }
+        }
         val latest = chatDao.getLatestConversation()
         if (latest != null && (System.currentTimeMillis() - latest.updatedAt) < 1000 * 60 * 60 * 3) {
+            setActiveConversationId(latest.id)
             return latest
         }
         val dateFormat = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
         val newConv = ChatConversationEntity(
             title = "שיחה • ${dateFormat.format(Date())}",
-            lastSnippet = "שיחה חדשה"
+            lastSnippet = "שיחה חדשה",
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
         )
         val id = chatDao.insertConversation(newConv)
+        setActiveConversationId(id)
         return newConv.copy(id = id)
     }
 
     suspend fun createNewConversation(title: String? = null): ChatConversationEntity {
         val dateFormat = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault())
+        val now = System.currentTimeMillis()
         val newConv = ChatConversationEntity(
-            title = title ?: "שיחה חדשה • ${dateFormat.format(Date())}",
-            lastSnippet = ""
+            title = title ?: "שיחה חדשה • ${dateFormat.format(Date(now))}",
+            lastSnippet = "",
+            createdAt = now,
+            updatedAt = now
         )
         val id = chatDao.insertConversation(newConv)
+        setActiveConversationId(id)
         return newConv.copy(id = id)
     }
 
@@ -180,6 +208,37 @@ class AiRepository(
                     tr = "Yapılandırılmış veya etkinleştirilmiş API anahtarı yok. Lütfen bir anahtar ekleyin veya etkinleştirin.",
                     it = "Nessuna chiave API configurata o attivata. Aggiungi o attiva una chiave."
                 )
+            )
+        }
+
+        // Proactive offline check (Task #42): If there is no active internet connection, do not wait for timeouts.
+        if (!com.example.util.NetworkUtils.isNetworkAvailable(context)) {
+            val conv = if (conversationId != null) {
+                chatDao.getConversationById(conversationId) ?: getOrCreateActiveConversation()
+            } else {
+                getOrCreateActiveConversation()
+            }
+            val offlineMsg = com.example.util.NetworkUtils.getNoInternetErrorMessage()
+            val userMsg = ChatMessageEntity(
+                conversationId = conv.id,
+                role = "user",
+                content = prompt,
+                timestamp = System.currentTimeMillis()
+            )
+            chatDao.addMessageAndUpdateConversation(conv.id, userMsg, prompt)
+            val assistantMsg = ChatMessageEntity(
+                conversationId = conv.id,
+                role = "assistant",
+                content = offlineMsg,
+                timestamp = System.currentTimeMillis()
+            )
+            chatDao.addMessageAndUpdateConversation(conv.id, assistantMsg, offlineMsg)
+            return QueryResult(
+                responseText = offlineMsg,
+                provider = com.example.data.model.ProviderType.CUSTOM,
+                model = "offline",
+                keyName = "offline",
+                fallbackOccurred = false
             )
         }
 
@@ -1020,6 +1079,7 @@ class AiRepository(
         const val BUILTIN_POLLINATIONS_KEY_ID = "builtin_pollinations_default"
         private const val PREF_REQUESTED_OUTPUT_TYPE = "preferred_output_type"
         private const val PREF_DEDICATED_KEY_PREFIX = "dedicated_key_for_task_"
+        private const val PREF_ACTIVE_CONVERSATION_ID = "pref_active_conversation_id"
 
         fun getPreferredOutputType(context: Context): AiTaskType {
             val prefs = context.getSharedPreferences("notifai_prefs", Context.MODE_PRIVATE)

@@ -101,15 +101,19 @@ import java.util.Locale
 
 class ChatDialogActivity : ComponentActivity() {
 
+    private val targetConversationIdState = mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStrings.initFromPrefs(this)
+        handleConversationIntent(intent)
 
         setContent {
             val currentLang = AppStrings.langOverrideState
             NotifAiTheme {
                 CompositionLocalProvider(LocalLayoutDirection provides AppStrings.layoutDirection()) {
                     ChatDialogScreen(
+                        targetConversationId = targetConversationIdState.value,
                         onDismiss = { finish() },
                         onOpenFullApp = {
                             val intent = Intent(this, MainActivity::class.java).apply {
@@ -124,6 +128,25 @@ class ChatDialogActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleConversationIntent(intent)
+    }
+
+    private fun handleConversationIntent(intent: Intent?) {
+        val cid = intent?.getLongExtra(EXTRA_CONVERSATION_ID, -1L) ?: -1L
+        if (cid > 0) {
+            targetConversationIdState.value = cid
+        } else {
+            val app = applicationContext as? NotifAiApplication
+            val activeId = app?.aiRepository?.getActiveConversationId()
+            if (activeId != null && activeId > 0) {
+                targetConversationIdState.value = activeId
+            }
+        }
+    }
+
     companion object {
         const val EXTRA_CONVERSATION_ID = "extra_conversation_id"
     }
@@ -131,6 +154,7 @@ class ChatDialogActivity : ComponentActivity() {
 
 @Composable
 fun ChatDialogScreen(
+    targetConversationId: Long? = null,
     onDismiss: () -> Unit,
     onOpenFullApp: () -> Unit
 ) {
@@ -141,7 +165,7 @@ fun ChatDialogScreen(
 
     BackHandler { onDismiss() }
 
-    var conversationId by remember { mutableStateOf<Long?>(null) }
+    var conversationId by remember { mutableStateOf(targetConversationId) }
     var activeTitle by remember { mutableStateOf(AppStrings.tr("שיחה פעילה", "Active Conversation")) }
     val isServiceProcessing by NotificationChatService.isProcessingFlow.collectAsState()
     var isLocalLoading by remember { mutableStateOf(false) }
@@ -149,12 +173,17 @@ fun ChatDialogScreen(
     var inputQuery by remember { mutableStateOf("") }
     var fontSizeMultiplier by remember { mutableFloatStateOf(1f) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(targetConversationId) {
         withContext(Dispatchers.IO) {
-            val conv = repository?.getOrCreateActiveConversation()
+            val conv = if (targetConversationId != null && targetConversationId > 0) {
+                repository?.chatDao?.getConversationById(targetConversationId)
+            } else {
+                repository?.getOrCreateActiveConversation()
+            }
             if (conv != null) {
                 conversationId = conv.id
                 activeTitle = conv.title
+                repository?.setActiveConversationId(conv.id)
             }
         }
     }
