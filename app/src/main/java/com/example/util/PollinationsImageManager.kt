@@ -70,6 +70,16 @@ object PollinationsImageManager {
         }
     }
 
+    fun clearAllSessionKeys() {
+        sessionGoogleKey = ""
+        synchronized(sessionOnlyKeysMap) {
+            sessionOnlyKeysMap.clear()
+        }
+    }
+
+    private const val TRANSLATION_KEY_VAULT_ID = "pollinations_google_translate_key"
+    private const val TRANSLATION_KEY_AAD = "GEMINI_TRANSLATE"
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -125,9 +135,17 @@ object PollinationsImageManager {
         val editor = prefs(context).edit()
         editor.putBoolean(KEY_REMEMBER_GOOGLE_KEY, rememberOnDevice)
         if (rememberOnDevice && trimmed.isNotBlank()) {
-            editor.putString(KEY_ENCRYPTED_GOOGLE_KEY, CryptoEngine.encrypt(trimmed))
+            editor.putString(
+                KEY_ENCRYPTED_GOOGLE_KEY,
+                CryptoEngine.encrypt(
+                    plainText = trimmed,
+                    keyId = TRANSLATION_KEY_VAULT_ID,
+                    aadContext = TRANSLATION_KEY_AAD
+                )
+            )
         } else {
             editor.remove(KEY_ENCRYPTED_GOOGLE_KEY)
+            CryptoEngine.destroyKeyMaterial(TRANSLATION_KEY_VAULT_ID)
         }
         editor.apply()
     }
@@ -144,7 +162,11 @@ object PollinationsImageManager {
         if (isRememberGoogleKeyEnabled(context)) {
             val enc = prefs(context).getString(KEY_ENCRYPTED_GOOGLE_KEY, null)
             if (!enc.isNullOrBlank()) {
-                val dec = CryptoEngine.decrypt(enc)
+                val dec = CryptoEngine.decrypt(
+                    encryptedText = enc,
+                    keyId = TRANSLATION_KEY_VAULT_ID,
+                    aadContext = TRANSLATION_KEY_AAD
+                )
                 if (dec.isNotBlank()) {
                     sessionGoogleKey = dec
                     return dec

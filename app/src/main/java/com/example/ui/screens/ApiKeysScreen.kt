@@ -682,7 +682,7 @@ fun ApiKeysScreen(
                 Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = AppStrings.tr("ייבוא / גיבוי רשימת מפתחות (JSON / TXT / הדבקה)", "Bulk Import / Backup (JSON / TXT / Paste)"),
+                    text = AppStrings.tr("ייבוא חכם של רשימת מפתחות (JSON / TXT / הדבקה)", "Smart Bulk Key Import (JSON / TXT / Paste)"),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1038,8 +1038,8 @@ fun ApiKeysScreen(
             text = {
                 Text(
                     text = AppStrings.tr(
-                        "האם אתה בטוח שברצונך למחוק את כל ${sortedKeys.size} המפתחות השמורים? פעולה זו תנקה את כל המפתחות מהאחסון המוצפן ולא ניתן לבטלה (מומלץ לבצע גיבוי לפני כן).",
-                        "Are you sure you want to delete all ${sortedKeys.size} saved keys? This will wipe all keys from encrypted storage and cannot be undone."
+                        "האם אתה בטוח שברצונך למחוק את כל ${sortedKeys.size} המפתחות השמורים? פעולה זו תשמיד לצמיתות גם את מפתחות ההצפנה החומרתיים שלהם מ-Android KeyStore ולא ניתן לבטלה.",
+                        "Are you sure you want to delete all ${sortedKeys.size} saved keys? This will permanently destroy their hardware encryption keys in Android KeyStore and cannot be undone."
                     ),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -1051,7 +1051,7 @@ fun ApiKeysScreen(
                         showDeleteAllConfirmDialog = false
                         Toast.makeText(
                             context,
-                            AppStrings.tr("כל המפתחות השמורים נמחקו בהצלחה 🗑️", "All saved keys deleted 🗑️"),
+                            AppStrings.tr("כל המפתחות השמורים נמחקו והושמדו מהחומרה בהצלחה 🗑️", "All saved keys deleted and destroyed from hardware 🗑️"),
                             Toast.LENGTH_SHORT
                         ).show()
                     },
@@ -1069,33 +1069,22 @@ fun ApiKeysScreen(
         )
     }
 
-    // Smart Bulk Import / Backup Dialog (.json, .txt, and Clipboard Paste)
+    // Smart One-Way Bulk Import Dialog (.json, .txt, and Clipboard Paste — Strictly Write-Only)
     if (showBulkKeysDialog) {
         SmartBulkKeysDialog(
-            existingKeysCount = sortedKeys.size,
             onDismiss = { showBulkKeysDialog = false },
             onImportKeys = { items ->
                 viewModel.importParsedKeys(items) { importedCount ->
                     Toast.makeText(
                         context,
                         AppStrings.tr(
-                            "יובאו בהצלחה $importedCount מפתחות עם שיוך ספק ומודל מועדף! 🎉",
-                            "Successfully imported $importedCount keys with provider & preferred model! 🎉"
+                            "יובאו והוצפנו בחומרה $importedCount מפתחות עם שיוך ספק ומודל מועדף! 🔒",
+                            "Imported and hardware-encrypted $importedCount keys with provider & preferred model! 🔒"
                         ),
                         Toast.LENGTH_LONG
                     ).show()
                 }
                 showBulkKeysDialog = false
-            },
-            onExportJson = { onResult ->
-                scope.launch {
-                    onResult(viewModel.exportKeysAsJson())
-                }
-            },
-            onExportTxt = { onResult ->
-                scope.launch {
-                    onResult(viewModel.exportKeysAsTxt())
-                }
             }
         )
     }
@@ -1561,17 +1550,13 @@ fun KeyPriorityCard(
 
 @Composable
 fun SmartBulkKeysDialog(
-    existingKeysCount: Int,
     onDismiss: () -> Unit,
-    onImportKeys: (List<ParsedImportKeyItem>) -> Unit,
-    onExportJson: ((String) -> Unit) -> Unit,
-    onExportTxt: ((String) -> Unit) -> Unit
+    onImportKeys: (List<ParsedImportKeyItem>) -> Unit
 ) {
     val context = LocalContext.current
     var rawInputText by remember { mutableStateOf("") }
     var parsedItems by remember { mutableStateOf<List<ParsedImportKeyItem>>(emptyList()) }
     var itemIndexChangingProvider by remember { mutableStateOf<Int?>(null) }
-    var pendingSaveContent by remember { mutableStateOf<String?>(null) }
 
     fun recomputeParsed(text: String) {
         rawInputText = text
@@ -1597,28 +1582,6 @@ fun SmartBulkKeysDialog(
         }
     }
 
-    val createDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri ->
-        val content = pendingSaveContent
-        if (uri != null && content != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(content) }
-                Toast.makeText(
-                    context,
-                    AppStrings.tr("הקובץ נשמר בהצלחה! 💾", "File saved successfully! 💾"),
-                    Toast.LENGTH_SHORT
-                ).show()
-            } catch (e: Exception) {
-                Toast.makeText(
-                    context,
-                    AppStrings.tr("שגיאה בשמירת הקובץ", "Error saving file"),
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-    }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -1629,14 +1592,14 @@ fun SmartBulkKeysDialog(
         title = {
             Column {
                 Text(
-                    text = AppStrings.tr("ייבוא וגיבוי חכם של רשימת מפתחות", "Smart Bulk Key Import & Backup"),
+                    text = AppStrings.tr("ייבוא חכם וחד-כיווני של רשימת מפתחות", "Smart One-Way Bulk Key Import"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = AppStrings.tr(
-                        "תומך בקובצי JSON, TXT והדבקת כמות מהלוח • מזהה אוטומטית ספק ומודל מועדף",
-                        "Supports JSON, TXT & bulk clipboard paste • Auto-detects provider & preferred model"
+                        "תומך בקובצי JSON, TXT והדבקה מהלוח • מפתחות מיובאים מוצפנים מיד בחומרה ולעולם אינם ניתנים לייצוא או לצפייה",
+                        "Supports JSON, TXT & clipboard paste • Imported keys are hardware-encrypted and can never be exported or viewed"
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
@@ -1650,80 +1613,30 @@ fun SmartBulkKeysDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Export / Backup section if keys exist
-                if (existingKeysCount > 0) {
-                    Card(
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = AppStrings.tr(
-                                    "💾 גיבוי / ייצוא $existingKeysCount המפתחות השמורים:",
-                                    "💾 Backup / Export $existingKeysCount Saved Keys:"
-                                ),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                OutlinedButton(
-                                    onClick = {
-                                        onExportJson { json ->
-                                            pendingSaveContent = json
-                                            createDocumentLauncher.launch("notifai_keys_backup.json")
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(AppStrings.tr("שמור JSON", "Save JSON"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        onExportTxt { txt ->
-                                            pendingSaveContent = txt
-                                            createDocumentLauncher.launch("notifai_keys_backup.txt")
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(AppStrings.tr("שמור TXT", "Save TXT"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        onExportTxt { txt ->
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("NotifAI Keys Backup", txt))
-                                            Toast.makeText(
-                                                context,
-                                                AppStrings.tr("כל המפתחות הועתקו ללוח! 📋", "All keys copied to clipboard! 📋"),
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(AppStrings.tr("העתק הכל", "Copy All"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
+                        Icon(
+                            Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = AppStrings.tr(
+                                "אבטחה חד-כיוונית מוחלטת: ניתן לייבא מפתחות פנימה בלבד. מרגע שמירת מפתח, אין שום אפשרות לצפות בו, להעתיק אותו או לייצא אותו החוצה.",
+                                "Strict One-Way Security: Keys can only be imported inward. Once saved, there is zero way to view, copy, or export any key."
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
                     }
                 }
 
@@ -1846,7 +1759,7 @@ fun SmartBulkKeysDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "#${index + 1} • ${item.rawKey.take(10)}...${item.rawKey.takeLast(4)}",
+                                            text = "#${index + 1} • ${com.example.data.security.CryptoEngine.maskApiKey(item.rawKey)}",
                                             style = MaterialTheme.typography.bodySmall,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -1921,7 +1834,7 @@ fun SmartBulkKeysDialog(
         }
         CenteredSelectionMenuDialog(
             title = AppStrings.tr("שינוי ידני של ספק ה-API למפתח #${changingIdx + 1}", "Select API Provider for Key #${changingIdx + 1}"),
-            subtitle = "${currentItem.rawKey.take(12)}...",
+            subtitle = com.example.data.security.CryptoEngine.maskApiKey(currentItem.rawKey),
             options = providerOptions,
             selectedValue = currentItem.provider,
             onSelect = { newProvider ->

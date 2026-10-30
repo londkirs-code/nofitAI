@@ -673,7 +673,7 @@ fun SecuritySettingsScreen(
         }
 
         // ==========================================
-        // 4. SECURITY ARCHITECTURE CARD
+        // 4. SECURITY ARCHITECTURE & NETWORK PROTECTION CARD
         // ==========================================
         Card(
             shape = RoundedCornerShape(20.dp),
@@ -700,12 +700,18 @@ fun SecuritySettingsScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = AppStrings.tr("הצפנת מפתחות בחומרה (Hardware Keystore)", "Hardware Keystore Encryption"),
+                            text = AppStrings.tr(
+                                "הצפנת מעטפת חומרתית נפרדת לכל מפתח + הגנת רשת",
+                                "Per-Key Hardware Envelope Encryption & Network Protection"
+                            ),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = AppStrings.tr("הצפנה חד-כיוונית לתצוגה • AES-256 GCM", "Write-only display protection • AES-256 GCM"),
+                            text = AppStrings.tr(
+                                "StrongBox / TEE • AES-256-GCM + AAD • Anti-MITM TLS 1.3",
+                                "StrongBox / TEE • AES-256-GCM + AAD • Anti-MITM TLS 1.3"
+                            ),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary
                         )
@@ -716,12 +722,14 @@ fun SecuritySettingsScreen(
 
                 Text(
                     text = AppStrings.tr(
-                        "• כל מפתח API מוצפן מיידית באמצעות מפתח מאסטר חומרתי שנוצר ב-Android KeyStore.\n" +
-                            "• לא ניתן לצפות בתוכן המפתח בשום שלב — לא בעת ההקלדה ולא בעת עריכה.\n" +
-                            "• המפתחות אינם נשמרים כטקסט גלוי (Plaintext) בשום שלב בדיסק או במסד הנתונים.",
-                        "• Every API key is encrypted immediately using a hardware-backed master key in Android KeyStore.\n" +
-                            "• Key contents can never be viewed in plain text—neither during entry nor editing.\n" +
-                            "• Keys are never stored as plaintext on disk or in the database."
+                        "• מפתח חומרתי ייעודי לכל מפתח (Per-Key Hardware Isolation): אין מפתח מאסטר אחד באפליקציה. עבור כל מפתח API נוצר מפתח הצפנה חומרתי עצמאי בתוך שבב האבטחה (StrongBox / TEE ב-Android KeyStore) + מפתח מעטפת אקראי (256-bit DEK) ואימות הקשר קריפטוגרפי (GCM AAD).\n" +
+                            "• כספת חד-כיוונית מוחלטת (Write-Only Vault): מרגע שמירת מפתח אין שום דרך לצפות בו, להעתיק אותו או לייצא אותו החוצה, וגיבוי ענן/ADB חסום לחלוטין.\n" +
+                            "• השמדה קריפטוגרפית ואיפוס זיכרון: במחיקת מפתח, מפתח החומרה שלו מושמד לצמיתות מרכיב ה-KeyStore ומערכי הזיכרון מאופסים מיד (RAM Zeroing).\n" +
+                            "• הגנה מלאה מפני האזנת תעבורת רשת (Anti-MITM): כל התקשורת נאכפת ב-TLS 1.3/1.2 בלבד, עוקפת שרתי Proxy מקומיים (NO_PROXY), דוחה תעודות ציתות מותקנות משתמש (System Root CAs בלבד), ולעולם אינה שולחת מפתחות בשורת ה-URL.",
+                        "• Per-Key Hardware Envelope Encryption: No single master key in code. Every API key gets its own isolated hardware key inside StrongBox / TEE (Android KeyStore) wrapping a unique 256-bit random DEK with GCM AAD binding.\n" +
+                            "• Strict Write-Only Vault: Once saved, a key can never be viewed, copied, or exported, and cloud/ADB backups are disabled.\n" +
+                            "• Cryptographic Destruction & RAM Zeroing: Deleting a key permanently destroys its hardware KeyStore entry and zeroes byte buffers in RAM.\n" +
+                            "• Anti-Sniffing & Anti-MITM Network Defense: Enforces TLS 1.3/1.2 only, bypasses local proxies (NO_PROXY), trusts only pre-installed System Root CAs, and never sends keys in URL query strings."
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 22.sp,

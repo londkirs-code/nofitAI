@@ -315,41 +315,5 @@ object SmartKeyImporter {
             "${provider.displayName.substringBefore(" ")} #$index"
         }
     }
-
-    /**
-     * Exports a list of keys (with their decrypted raw keys) to a formatted JSON string for backup/sharing.
-     */
-    fun exportKeysToJson(keysWithPlain: List<Pair<ApiKeyEntity, String>>): String {
-        val root = JSONObject()
-        val arr = JSONArray()
-        keysWithPlain.forEach { (entity, rawKey) ->
-            val obj = JSONObject().apply {
-                put("name", entity.name)
-                put("provider", entity.provider.name)
-                put("key", rawKey)
-                put("preferredModel", entity.selectedModel)
-                if (entity.fallbackModels.isNotBlank()) {
-                    put("fallbackModels", entity.fallbackModels)
-                }
-                put("supportedTasks", entity.supportedTasks)
-                put("priority", entity.priority)
-                if (!entity.customBaseUrl.isNullOrBlank()) {
-                    put("customBaseUrl", entity.customBaseUrl)
-                    put("customProtocol", entity.customProtocol)
-                }
-            }
-            arr.put(obj)
-        }
-        root.put("keys", arr)
-        return root.toString(2)
-    }
-
-    /**
-     * Exports a list of keys (with their decrypted raw keys) to a clean human-readable .txt format.
-     */
-    fun exportKeysToTxt(keysWithPlain: List<Pair<ApiKeyEntity, String>>): String {
-        return keysWithPlain.joinToString("\n") { (entity, rawKey) ->
-            "${entity.name} | ${entity.provider.name} | model=${entity.selectedModel} | $rawKey"
-        }
-    }
 }
+

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Strict Anti-Sniffing & Anti-MITM Network Security Policy:
+        1. Cleartext (HTTP) traffic is strictly forbidden (HTTPS/TLS only).
+        2. Only official pre-installed System Root CAs are trusted.
+           User-installed certificates (used by MITM proxies like Charles, Fiddler, Burp, HttpCanary)
+           are explicitly rejected even in debug builds.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

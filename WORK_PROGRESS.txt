@@ -238,3 +238,35 @@ Task #43 (Smooth Auto-Scrolling Drag-and-Drop, Master Switch, Compact Keys View,
 - Renamed "היסטוריה" to "שיחות" across the app and all 12 languages in `AppStrings.kt`.
 - Updated the App Launcher Icon (all mipmap densities + `ic_launcher_custom_asset.png` + `#3322D3` background) and Notification Icon (`ic_stat_notifai_bell.xml`) with the new glowing AI Robot Bell icon.
 - Verified with `compile_applet` and updated `NotifAI.apk`.
+================================================================================
+משימה #44: אבטחה אמיתית ובלתי מתפשרת (Per-Key Hardware Envelope Encryption + Anti-MITM), ביטול מוחלט של ייצוא/צפייה במפתחות ומחיקת כל קוד ה-PIN
+================================================================================
+- [בוצע] 1. ביטול מוחלט של כל אפשרות לייצא, לחלץ, להעתיק או לצפות במפתח שמור (Write-Only Vault):
+  - הוסרו לחלוטין כל פונקציות ייצוא וחשיפת המפתחות מכל הקוד (`exportAllKeysWithPlain`, `getDecryptedKey`, `exportKeysAsJson`, `exportKeysAsTxt`, `exportKeysToJson`, `exportKeysToTxt`).
+  - הוסרו מחלונית הייבוא החכם (`SmartBulkKeysDialog`) כל כפתורי הגיבוי/ייצוא (`שמור JSON`, `שמור TXT`, `העתק הכל`). כעת ניתן אך ורק לייבא מפתחות פנימה לכספת (חד-כיווני בלבד).
+  - נחסמו גיבויי ענן וחילוץ ADB (`android:allowBackup="false"`, והחרגת `database`, `sharedpref` ו-`file` ב-`backup_rules.xml` ו-`data_extraction_rules.xml`).
+- [בוצע] 2. מחיקה מלאה של כל זכר לנעילת PIN ישנה:
+  - נמחקו הקבצים `AppLockManager.kt` ו-`AppLockScreen.kt`, נוקו כל ההפניות אליהם (כולל בטסטים), ונוסף ניקוי אוטומטי של `notifai_app_lock_prefs` בעליית האפליקציה.
+- [בוצע] 3. הצפנת מעטפת חומרתית אמיתית נפרדת לכל מפתח (Per-Key Hardware Envelope Encryption - ENC_V2) והגנה מלאה על תעבורת הרשת (Anti-MITM):
+  - שוכתב `CryptoEngine.kt` כך שאין מפתח מאסטר יחיד באפליקציה ואין שום fallback של SHA-256 סטטי או Base64: עבור כל מפתח (`keyId`) נוצר מפתח חומרתי ייעודי ונפרד ב-`AndroidKeyStore` (`NotifAI_VaultKey_<keyId>`) עם עדיפות לשבב אבטחה ייעודי (`StrongBox HSM` / `TEE`).
+  - בכל שמירה נוצר מפתח הצפנת נתונים חד-פעמי אקראי של 256 ביט (`DEK` מ-`SecureRandom`) שמצפין את המפתח ב-`AES-256-GCM` (תג אימות 128 ביט) ונעטף על ידי מפתח החומרה הייעודי עם אימות הקשר קריפטוגרפי (`GCM AAD`) הקושר בין `keyId` לבין הספק (`provider`).
+  - איפוס מיידי של מערכי הזיכרון (`Arrays.fill` ב-RAM) מיד לאחר ההצפנה והפענוח, והשמדה קריפטוגרפית (`destroyKeyMaterial` / `destroyAllKeyMaterial`) של מפתח החומרה מ-`AndroidKeyStore` בעת מחיקת מפתח.
+  - הגנת תעבורת רשת ב-`AiApiClient.kt` ו-`network_security_config.xml`:
+    * הוסרו כל מפתחות ה-API משורות ה-URL (כולל ב-Gemini — נשלחים אך ורק בכותרות HTTP מוצפנות `x-goog-api-key` / `Authorization`).
+    * אכיפת `Proxy.NO_PROXY` לעקיפת שרתי פרוקסי מקומיים לציתות (Charles / Fiddler / Burp / HttpCanary).
+    * אכיפת `TLS 1.3` / `TLS 1.2` בלבד (`ConnectionSpec.RESTRICTED_TLS` / `MODERN_TLS`), חסימת HTTP לא מוצפן (`usesCleartextTraffic="false"`), ואימות תעודות מול שורשי מערכת רשמיים בלבד (`SystemOnlyTrustManager` + `<certificates src="system" />`) הדוחה תעודות MITM שהותקנו על ידי משתמש.
+    * סינון והסתרה אוטומטית (`redactSecretsFromText`) של כל תבנית מפתח/טוקן מהודעות שגיאה.
+
+================================================================================
+משימה #45: תיקון פתיחת 'פעולות' מההתראה ללא הסתרה על ידי וילון ההתראות + הפרדת רשימת המפתחות לכפתור ומסך 'ניהול מפתחות' ייעודי בתוך פעולות
+================================================================================
+- [בוצע] 1. תיקון פתיחת 'פעולות' מההתראה ללא הסתרת החלון על ידי מרכז ההתראות:
+  - הוסרה הקריאה ל-`keepNotificationShadeOpen` מתוך `onCreate` ו-`onNewIntent` ב-`AttachContentDialogActivity.kt`, שגרמה קודם לכן לכך שמיד עם הלחיצה על כפתור 'פעולות' וילון ההתראות נמשך שוב לקדמת המסך והסתיר את חלון 'פעולות'.
+  - כעת בלחיצה על 'פעולות' (או 'שלח תוכן') החלון נפתח מיד בקדמת המסך באופן נקי וללא חסימה, ורק בסגירת חלון 'פעולות' (`closeDialogAndOptionallyReopenShade`) מרכז ההתראות נפתח מחדש אוטומטית (כולל הרשאת `EXPAND_STATUS_BAR` ב-`AndroidManifest.xml`).
+- [בוצע] 2. העברת רשימת המפתחות המלאה מתוך המסך הראשי של 'פעולות' לתוך כפתור ומסך ייעודי '🔑 ניהול מפתחות':
+  - במסך הראשי של 'פעולות' (`ActionsPopupSection`) הוחלפה רשימת המפתחות הארוכה בכפתור נקי וברור **"🔑 ניהול מפתחות"** המציג כמה מפתחות פעילים ואת המודל הפעיל הראשי.
+  - בלחיצה על **"🔑 ניהול מפתחות"** נפתח מסך ניהול המפתחות הייעודי (`KeysManagerPopupSection` / `AttachDialogMode.KEYS_MANAGER`) ובו:
+    * מתג **"כל המפתחות יחד"** לכיבוי והדלקת כל המפתחות בבת אחת.
+    * מתג **"תצוגה מצומצמת"** למעבר בין שורות קומפקטיות לתצוגה מורחבת.
+    * כפתור **"+ הוסף מפתח"** והרשימה המלאה של המפתחות עם גרירה חלקה לעדיפויות, לחיצה בכל מקום לעריכה, ובחירת מודל מהירה.
+    * כפתור חזרה נח ל-'פעולות' בראש ובתחתית החלון.

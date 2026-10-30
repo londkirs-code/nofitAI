@@ -160,6 +160,7 @@ import java.util.Locale
 enum class AttachDialogMode {
     MENU,
     ACTIONS,
+    KEYS_MANAGER,
     VOICE_RECORD,
     SPEECH_TO_TEXT,
     FILE_SELECTED
@@ -175,9 +176,6 @@ class AttachContentDialogActivity : ComponentActivity() {
         AppStrings.initFromPrefs(this)
         initialModeState = resolveModeFromIntent(intent)
         launchedFromNotification = intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true
-        if (launchedFromNotification) {
-            keepNotificationShadeOpen(this)
-        }
 
         setContent {
             val currentLang = AppStrings.langOverrideState
@@ -186,10 +184,10 @@ class AttachContentDialogActivity : ComponentActivity() {
                     AttachContentDialogScreen(
                         initialMode = initialModeState,
                         onDismiss = {
-                            if (launchedFromNotification) {
-                                keepNotificationShadeOpen(this@AttachContentDialogActivity)
-                            }
-                            finish()
+                            closeDialogAndOptionallyReopenShade(reopenShade = true)
+                        },
+                        onDismissWithoutReopeningShade = {
+                            closeDialogAndOptionallyReopenShade(reopenShade = false)
                         }
                     )
                 }
@@ -202,14 +200,26 @@ class AttachContentDialogActivity : ComponentActivity() {
         setIntent(intent)
         initialModeState = resolveModeFromIntent(intent)
         launchedFromNotification = intent.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false)
-        if (launchedFromNotification) {
-            keepNotificationShadeOpen(this)
+    }
+
+    private fun closeDialogAndOptionallyReopenShade(reopenShade: Boolean) {
+        val shouldReopen = launchedFromNotification && reopenShade
+        val appContext = applicationContext
+        finish()
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
+        if (shouldReopen) {
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                { keepNotificationShadeOpen(appContext) },
+                140L
+            )
         }
     }
 
     private fun resolveModeFromIntent(intent: Intent?): AttachDialogMode {
         return when (intent?.getStringExtra(EXTRA_INITIAL_MODE)) {
             MODE_ACTIONS -> AttachDialogMode.ACTIONS
+            MODE_KEYS_MANAGER -> AttachDialogMode.KEYS_MANAGER
             else -> AttachDialogMode.MENU
         }
     }
@@ -219,23 +229,24 @@ class AttachContentDialogActivity : ComponentActivity() {
         const val EXTRA_FROM_NOTIFICATION = "extra_from_notification"
         const val MODE_ATTACH = "mode_attach"
         const val MODE_ACTIONS = "mode_actions"
+        const val MODE_KEYS_MANAGER = "mode_keys_manager"
 
         fun keepNotificationShadeOpen(context: Context) {
-            try {
-                val fastService = FastScreenCaptureAccessibilityService.instance
-                if (fastService != null) {
-                    fastService.performGlobalAction(
-                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
-                    )
-                    return
-                }
-            } catch (_: Exception) {}
             try {
                 val statusBarService = context.getSystemService("statusbar")
                 if (statusBarService != null) {
                     val statusBarManager = Class.forName("android.app.StatusBarManager")
                     val expandMethod = statusBarManager.getMethod("expandNotificationsPanel")
                     expandMethod.invoke(statusBarService)
+                    return
+                }
+            } catch (_: Exception) {}
+            try {
+                val fastService = FastScreenCaptureAccessibilityService.instance
+                if (fastService != null) {
+                    fastService.performGlobalAction(
+                        android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+                    )
                 }
             } catch (_: Exception) {}
         }
@@ -245,7 +256,8 @@ class AttachContentDialogActivity : ComponentActivity() {
 @Composable
 fun AttachContentDialogScreen(
     initialMode: AttachDialogMode = AttachDialogMode.MENU,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onDismissWithoutReopeningShade: () -> Unit = onDismiss
 ) {
     val context = LocalContext.current
     var currentMode by remember(initialMode) { mutableStateOf(initialMode) }
@@ -303,7 +315,7 @@ fun AttachContentDialogScreen(
                             AppStrings.tr("התראת NotifAI נסגרה", "NotifAI notification closed"),
                             Toast.LENGTH_SHORT
                         ).show()
-                        onDismiss()
+                        onDismissWithoutReopeningShade()
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
@@ -325,10 +337,16 @@ fun AttachContentDialogScreen(
     }
 
     BackHandler {
-        if (currentMode != initialMode && currentMode != AttachDialogMode.MENU && currentMode != AttachDialogMode.ACTIONS) {
-            currentMode = initialMode
-        } else {
-            onDismiss()
+        when {
+            currentMode == AttachDialogMode.KEYS_MANAGER -> {
+                currentMode = AttachDialogMode.ACTIONS
+            }
+            currentMode != initialMode && currentMode != AttachDialogMode.MENU && currentMode != AttachDialogMode.ACTIONS -> {
+                currentMode = initialMode
+            }
+            else -> {
+                onDismiss()
+            }
         }
     }
 
@@ -362,18 +380,25 @@ fun AttachContentDialogScreen(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         if (currentMode != AttachDialogMode.MENU && currentMode != AttachDialogMode.ACTIONS) {
                             IconButton(
-                                onClick = { currentMode = AttachDialogMode.MENU },
+                                onClick = {
+                                    currentMode = if (currentMode == AttachDialogMode.KEYS_MANAGER) {
+                                        AttachDialogMode.ACTIONS
+                                    } else {
+                                        AttachDialogMode.MENU
+                                    }
+                                },
                                 modifier = Modifier
                                     .size(36.dp)
                                     .testTag("attach_back_button")
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = AppStrings.tr("חזרה לתפריט", "Back to menu")
+                                    contentDescription = AppStrings.tr("חזרה", "Back")
                                 )
                             }
                         }
@@ -403,6 +428,7 @@ fun AttachContentDialogScreen(
                                     imageVector = when (currentMode) {
                                         AttachDialogMode.MENU -> Icons.Default.AttachFile
                                         AttachDialogMode.ACTIONS -> Icons.Default.Settings
+                                        AttachDialogMode.KEYS_MANAGER -> Icons.Default.Key
                                         AttachDialogMode.VOICE_RECORD -> Icons.Default.Mic
                                         AttachDialogMode.SPEECH_TO_TEXT -> Icons.Default.RecordVoiceOver
                                         AttachDialogMode.FILE_SELECTED -> Icons.Default.InsertDriveFile
@@ -418,7 +444,8 @@ fun AttachContentDialogScreen(
                             Text(
                                 text = when (currentMode) {
                                     AttachDialogMode.MENU -> AppStrings.tr("שלח תוכן ל-NotifAI", "Send Content to NotifAI")
-                                    AttachDialogMode.ACTIONS -> AppStrings.tr("פעולות, פלט וניהול מפתחות", "Actions, Output & Key Management")
+                                    AttachDialogMode.ACTIONS -> AppStrings.tr("פעולות והגדרות פלט", "Actions & Output Settings")
+                                    AttachDialogMode.KEYS_MANAGER -> AppStrings.tr("ניהול מפתחות API", "Manage API Keys")
                                     AttachDialogMode.VOICE_RECORD -> AppStrings.tr("הקלטת קול מיידית", "Instant Voice Recording")
                                     AttachDialogMode.SPEECH_TO_TEXT -> AppStrings.tr("דיבור לטקסט (שליחה מיידית)", "Speech-to-Text (Instant Send)")
                                     AttachDialogMode.FILE_SELECTED -> AppStrings.tr("העלאת קובץ מצורף", "Upload Attachment")
@@ -429,7 +456,8 @@ fun AttachContentDialogScreen(
                             Text(
                                 text = when (currentMode) {
                                     AttachDialogMode.MENU -> AppStrings.tr("בחר כיצד להזין תוכן ל-AI", "Choose how to send content to AI")
-                                    AttachDialogMode.ACTIONS -> AppStrings.tr("העתקה, ניקוי, שיחה חדשה, סוג פלט ומפתחות", "Copy, clear, new chat, output type & keys")
+                                    AttachDialogMode.ACTIONS -> AppStrings.tr("העתקה, ניקוי, שיחה חדשה, סוג פלט וניהול מפתחות", "Copy, clear, new chat, output type & key management")
+                                    AttachDialogMode.KEYS_MANAGER -> AppStrings.tr("כיבוי והדלקת הכל, תצוגה מצומצמת, סדר עדיפויות ועריכה", "Turn all on/off, compact view, priority order & editing")
                                     AttachDialogMode.VOICE_RECORD -> AppStrings.tr("ההקלטה מתחילה מיד עם הפתיחה", "Recording starts immediately on open")
                                     AttachDialogMode.SPEECH_TO_TEXT -> AppStrings.tr("מקשיב ושולח מיד (לחץ לעריכה לביטול שליחה אוטומטית)", "Listens & sends immediately (tap to edit)")
                                     AttachDialogMode.FILE_SELECTED -> AppStrings.tr("אישור ושליחה", "Confirm & send")
@@ -468,7 +496,7 @@ fun AttachContentDialogScreen(
                         AttachDialogMode.MENU -> {
                             AttachMenuOptions(
                                 onScreenshotClick = {
-                                    onDismiss()
+                                    onDismissWithoutReopeningShade()
                                     val fastService = FastScreenCaptureAccessibilityService.instance
                                     if (fastService != null) {
                                         fastService.captureNow()
@@ -501,11 +529,23 @@ fun AttachContentDialogScreen(
 
                         AttachDialogMode.ACTIONS -> {
                             ActionsPopupSection(
-                                scrollState = mainDialogScrollState,
+                                onOpenKeysManager = {
+                                    currentMode = AttachDialogMode.KEYS_MANAGER
+                                },
                                 onCloseNotificationClick = {
                                     showCloseNotificationConfirm = true
                                 },
-                                onDismissPopup = onDismiss
+                                onDismissPopup = onDismiss,
+                                onDismissWithoutReopeningShade = onDismissWithoutReopeningShade
+                            )
+                        }
+
+                        AttachDialogMode.KEYS_MANAGER -> {
+                            KeysManagerPopupSection(
+                                scrollState = mainDialogScrollState,
+                                onBackToActions = {
+                                    currentMode = AttachDialogMode.ACTIONS
+                                }
                             )
                         }
 
@@ -643,9 +683,10 @@ private fun AttachMenuOptions(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ActionsPopupSection(
-    scrollState: androidx.compose.foundation.ScrollState,
+    onOpenKeysManager: () -> Unit,
     onCloseNotificationClick: () -> Unit,
-    onDismissPopup: () -> Unit
+    onDismissPopup: () -> Unit,
+    onDismissWithoutReopeningShade: () -> Unit = onDismissPopup
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -654,11 +695,6 @@ private fun ActionsPopupSection(
     val sortedKeys = remember(allKeys) { allKeys.sortedBy { it.priority } }
     val isAudioPlayingInNotif by NotificationChatService.isAudioPlayingFlow.collectAsState()
 
-    val prefs = remember { context.getSharedPreferences("notifai_ui_prefs", Context.MODE_PRIVATE) }
-    var isCompactKeysView by remember {
-        mutableStateOf(prefs.getBoolean("compact_keys_view", false))
-    }
-
     var preferredOutputType by remember {
         mutableStateOf(AiRepository.getPreferredOutputType(context))
     }
@@ -666,15 +702,6 @@ private fun ActionsPopupSection(
 
     var showPerTaskRoutingSection by remember { mutableStateOf(false) }
     var taskRoutingRefreshTick by remember { mutableIntStateOf(0) }
-
-    var showAddOrEditKeyDialog by remember { mutableStateOf(false) }
-    var keyBeingEdited by remember { mutableStateOf<ApiKeyEntity?>(null) }
-
-    // State for quick model selector dialog for a specific key
-    var keyForQuickModelSelect by remember { mutableStateOf<ApiKeyEntity?>(null) }
-    var quickModelsList by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
-    var isFetchingQuickModels by remember { mutableStateOf(false) }
-    var quickModelSearchQuery by remember { mutableStateOf("") }
 
     val latestMediaUri = NotificationChatService.latestAttachmentUri
     val latestMediaMime = NotificationChatService.latestAttachmentMimeType
@@ -753,7 +780,7 @@ private fun ActionsPopupSection(
                                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                             }
                             context.startActivity(chooser)
-                            onDismissPopup()
+                            onDismissWithoutReopeningShade()
                         }
                     }
                 },
@@ -949,7 +976,7 @@ private fun ActionsPopupSection(
                             }
                         }
                         context.startActivity(intent)
-                        onDismissPopup()
+                        onDismissWithoutReopeningShade()
                     }
             ) {
                 Column(
@@ -1206,7 +1233,159 @@ private fun ActionsPopupSection(
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
 
-        // 3. Direct Model Selection, Key Toggle ON/OFF, Duplicate, Drag Reorder & Edit
+        // 3. Dedicated 'ניהול מפתחות' (Manage Keys) Button that opens the full keys list, master switch & compact toggle
+        val enabledKeysCount = sortedKeys.count { it.isEnabled }
+        val primaryEnabledKey = sortedKeys.firstOrNull { it.isEnabled }
+        val keysSubtitle = if (primaryEnabledKey != null) {
+            AppStrings.tr(
+                "פעיל #1: ${primaryEnabledKey.name} (${primaryEnabledKey.selectedModel.substringAfterLast("/")}) • לחץ לרשימת המפתחות, כיבוי/הדלקת הכל ותצוגה מצומצמת",
+                "Active #1: ${primaryEnabledKey.name} (${primaryEnabledKey.selectedModel.substringAfterLast("/")}) • Tap for keys list, turn all on/off & compact view"
+            )
+        } else {
+            AppStrings.tr(
+                "רשימת המפתחות, כיבוי והדלקת הכל, תצוגה מצומצמת, גרירת עדיפויות ועריכה",
+                "Keys list, turn all on/off, compact view, priority drag & editing"
+            )
+        }
+
+        AttachOptionCard(
+            title = AppStrings.tr("🔑 ניהול מפתחות", "🔑 Manage Keys"),
+            subtitle = keysSubtitle,
+            badgeText = AppStrings.tr(
+                "$enabledKeysCount/${sortedKeys.size} פעילים",
+                "$enabledKeysCount/${sortedKeys.size} ON"
+            ),
+            icon = Icons.Default.Key,
+            accentColor = Color(0xFF0284C7),
+            testTag = "actions_manage_keys_btn",
+            onClick = onOpenKeysManager
+        )
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 4.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+
+        // 4. Close Notification Button
+        AttachOptionCard(
+            title = AppStrings.tr("🛑 סגור התראה", "🛑 Close Notification"),
+            subtitle = AppStrings.tr("הסר את התראת NotifAI מווילון ההתראות", "Remove NotifAI notification from the notification shade"),
+            badgeText = AppStrings.tr("הסרה", "Remove"),
+            icon = Icons.Default.Close,
+            accentColor = Color(0xFFDC2626),
+            testTag = "actions_close_notification_btn",
+            onClick = onCloseNotificationClick
+        )
+    }
+
+    val warnTask = missingModelWarningTask
+    if (warnTask != null) {
+        val pollinationsKey = sortedKeys.firstOrNull { it.provider == com.example.data.model.ProviderType.POLLINATIONS }
+        AlertDialog(
+            onDismissRequest = { missingModelWarningTask = null },
+            icon = {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = {
+                Text(
+                    text = AppStrings.tr(
+                        "לא מוגדר מודל פעיל עבור ${warnTask.emoji} ${warnTask.titleHe}",
+                        "No Active Model Configured for ${warnTask.emoji} ${warnTask.name}"
+                    ),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = AppStrings.tr(
+                            "בחרת בפלט '${warnTask.titleHe}', אך כרגע אין מפתח או מודל פעיל שמוגדר לטפל בסוג פלט זה.\nהאם תרצה להגדיר או להפעיל מודל מתאים כעת?",
+                            "You selected '${warnTask.name}' output, but no active key or model is currently configured for this output type.\nWould you like to configure or enable a model for this type now?"
+                        ),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (warnTask == AiTaskType.IMAGE_GEN && pollinationsKey != null && !pollinationsKey.isEnabled) {
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    repository.updateKeyEntity(pollinationsKey.copy(isEnabled = true))
+                                    com.example.util.PollinationsImageManager.setEngineEnabled(context, true)
+                                    Toast.makeText(
+                                        context,
+                                        AppStrings.tr("מנוע התמונות המובנה Pollinations הופעל! 🎨", "Built-in Pollinations image engine enabled! 🎨"),
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                    missingModelWarningTask = null
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                AppStrings.tr("🎨 הפעל מיד את Pollinations (חינם ללא מפתח)", "🎨 Enable Pollinations Now (Free Built-in)"),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        missingModelWarningTask = null
+                        onOpenKeysManager()
+                    }
+                ) {
+                    Text(
+                        AppStrings.tr("הגדר מודל בניהול מפתחות", "Configure Model in Manage Keys"),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { missingModelWarningTask = null }) {
+                    Text(AppStrings.tr("אחר כך", "Later"))
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun KeysManagerPopupSection(
+    scrollState: androidx.compose.foundation.ScrollState,
+    onBackToActions: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember { (context.applicationContext as NotifAiApplication).aiRepository }
+    val allKeys by repository.allKeysFlow.collectAsState(initial = emptyList())
+    val sortedKeys = remember(allKeys) { allKeys.sortedBy { it.priority } }
+
+    val prefs = remember { context.getSharedPreferences("notifai_ui_prefs", Context.MODE_PRIVATE) }
+    var isCompactKeysView by remember {
+        mutableStateOf(prefs.getBoolean("compact_keys_view", false))
+    }
+
+    var showAddOrEditKeyDialog by remember { mutableStateOf(false) }
+    var keyBeingEdited by remember { mutableStateOf<ApiKeyEntity?>(null) }
+
+    // State for quick model selector dialog for a specific key
+    var keyForQuickModelSelect by remember { mutableStateOf<ApiKeyEntity?>(null) }
+    var quickModelsList by remember { mutableStateOf<List<AiModelInfo>>(emptyList()) }
+    var isFetchingQuickModels by remember { mutableStateOf(false) }
+    var quickModelSearchQuery by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Header Row: Description + Add Key Button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1214,7 +1393,7 @@ private fun ActionsPopupSection(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = AppStrings.tr("כיבוי/הדלקה, גרירת סדר עדיפויות ובחירת מודל", "Toggle Keys, Drag Priority & Select Model"),
+                    text = AppStrings.tr("רשימת מפתחות API וסדר עדיפויות", "API Keys List & Priority Order"),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -1245,6 +1424,7 @@ private fun ActionsPopupSection(
             }
         }
 
+        // Master Controls Bar: Turn All Keys ON/OFF + Compact View Toggle
         if (sortedKeys.isNotEmpty()) {
             val allEnabled = sortedKeys.all { it.isEnabled }
             val anyEnabled = sortedKeys.any { it.isEnabled }
@@ -1512,7 +1692,6 @@ private fun ActionsPopupSection(
                                     }
                                 }
 
-                                // Switch to turn keys ON / OFF directly from 'פעולות'
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1677,100 +1856,17 @@ private fun ActionsPopupSection(
             }
         }
 
-        HorizontalDivider(
-            modifier = Modifier.padding(vertical = 4.dp),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-        )
-
-        // 4. Close Notification Button
-        AttachOptionCard(
-            title = AppStrings.tr("🛑 סגור התראה", "🛑 Close Notification"),
-            subtitle = AppStrings.tr("הסר את התראת NotifAI מווילון ההתראות", "Remove NotifAI notification from the notification shade"),
-            badgeText = AppStrings.tr("הסרה", "Remove"),
-            icon = Icons.Default.Close,
-            accentColor = Color(0xFFDC2626),
-            testTag = "actions_close_notification_btn",
-            onClick = onCloseNotificationClick
-        )
-    }
-
-    val warnTask = missingModelWarningTask
-    if (warnTask != null) {
-        val pollinationsKey = sortedKeys.firstOrNull { it.provider == com.example.data.model.ProviderType.POLLINATIONS }
-        AlertDialog(
-            onDismissRequest = { missingModelWarningTask = null },
-            icon = {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
-                )
-            },
-            title = {
-                Text(
-                    text = AppStrings.tr(
-                        "לא מוגדר מודל פעיל עבור ${warnTask.emoji} ${warnTask.titleHe}",
-                        "No Active Model Configured for ${warnTask.emoji} ${warnTask.name}"
-                    ),
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = AppStrings.tr(
-                            "בחרת בפלט '${warnTask.titleHe}', אך כרגע אין מפתח או מודל פעיל שמוגדר לטפל בסוג פלט זה.\nהאם תרצה להגדיר או להפעיל מודל מתאים כעת?",
-                            "You selected '${warnTask.name}' output, but no active key or model is currently configured for this output type.\nWould you like to configure or enable a model for this type now?"
-                        ),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    if (warnTask == AiTaskType.IMAGE_GEN && pollinationsKey != null && !pollinationsKey.isEnabled) {
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    repository.updateKeyEntity(pollinationsKey.copy(isEnabled = true))
-                                    com.example.util.PollinationsImageManager.setEngineEnabled(context, true)
-                                    Toast.makeText(
-                                        context,
-                                        AppStrings.tr("מנוע התמונות המובנה Pollinations הופעל! 🎨", "Built-in Pollinations image engine enabled! 🎨"),
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                    missingModelWarningTask = null
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(
-                                AppStrings.tr("🎨 הפעל מיד את Pollinations (חינם ללא מפתח)", "🎨 Enable Pollinations Now (Free Built-in)"),
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val candidate = sortedKeys.firstOrNull { warnTask in it.parsedSupportedTasks }
-                            ?: sortedKeys.firstOrNull()
-                        missingModelWarningTask = null
-                        keyBeingEdited = candidate
-                        showAddOrEditKeyDialog = true
-                    }
-                ) {
-                    Text(
-                        AppStrings.tr("הגדר מודל לסוג זה", "Configure Model for Type"),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { missingModelWarningTask = null }) {
-                    Text(AppStrings.tr("אחר כך", "Later"))
-                }
-            }
-        )
+        OutlinedButton(
+            onClick = onBackToActions,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("keys_manager_back_to_actions_btn"),
+            shape = RoundedCornerShape(14.dp)
+        ) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(AppStrings.tr("חזרה לפעולות", "Back to Actions"), fontWeight = FontWeight.Bold)
+        }
     }
 
     // Quick Model Picker + Fallback Toggle + Model Type Filter + Drag Reorder Modal

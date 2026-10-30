@@ -7,20 +7,31 @@ import com.example.data.model.FetchModelsResponse
 import com.example.data.model.ProviderType
 import com.example.util.PollinationsAspectRatio
 import com.example.util.PollinationsImageManager
+import com.example.data.security.CryptoEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.ConnectionSpec
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.TlsVersion
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.Proxy
 import java.net.URLEncoder
+import java.security.KeyStore
+import java.security.cert.CertificateException
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 import kotlin.random.Random
 
 sealed class AiCallException(message: String) : Exception(message) {
@@ -59,12 +70,102 @@ data class ChatTurn(
 
 class AiApiClient {
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(15, TimeUnit.SECONDS)
-        .build()
+    /**
+     * Hardened Anti-Sniffing & Anti-MITM HTTP Client:
+     * 1. Proxy.NO_PROXY: Bypasses any local Wi-Fi / system HTTP proxy (Charles, Fiddler, Burp).
+     * 2. RESTRICTED_TLS & MODERN_TLS: Enforces TLS 1.3 / TLS 1.2 with strong AEAD cipher suites only.
+     * 3. SystemOnlyTrustManager: Rejects user-installed MITM root certificates and trusts only official Android system root CAs.
+     * 4. HTTPS-Only & Query-Key Sanitization Interceptor: Blocks cleartext HTTP and ensures API keys are never sent in URL query strings.
+     * 5. cache(null): Never writes encrypted API responses or headers to disk cache.
+     */
+    private val httpClient: OkHttpClient = buildHardenedHttpClient()
+
+    private fun buildHardenedHttpClient(): OkHttpClient {
+        val strictTlsSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+            .build()
+
+        val builder = OkHttpClient.Builder()
+            .proxy(Proxy.NO_PROXY)
+            .cache(null)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .connectionSpecs(listOf(ConnectionSpec.RESTRICTED_TLS, strictTlsSpec))
+            .addInterceptor { chain ->
+                val original = chain.request()
+                if (!original.isHttps) {
+                    throw IOException("חסימת אבטחה: תקשורת לא מוצפנת (HTTP) אסורה בהחלט. מותר HTTPS/TLS בלבד.")
+                }
+                // Strip any accidental 'key' or 'api_key' query parameter so secrets never travel in URLs
+                val url = original.url
+                val sanitizedRequest = if (url.queryParameterNames.any { it.equals("key", true) || it.equals("api_key", true) }) {
+                    val cleanUrlBuilder = url.newBuilder()
+                        .removeAllQueryParameters("key")
+                        .removeAllQueryParameters("api_key")
+                    original.newBuilder().url(cleanUrlBuilder.build()).build()
+                } else {
+                    original
+                }
+                chain.proceed(sanitizedRequest)
+            }
+
+        try {
+            val systemTrustManager = createSystemOnlyTrustManager()
+            if (systemTrustManager != null) {
+                val sslContext = SSLContext.getInstance("TLS")
+                sslContext.init(null, arrayOf<TrustManager>(systemTrustManager), java.security.SecureRandom())
+                builder.sslSocketFactory(sslContext.socketFactory, systemTrustManager)
+            }
+        } catch (_: Exception) {
+            // Falls back to platform default TLS + network_security_config.xml system-only trust anchors
+        }
+
+        return builder.build()
+    }
+
+    private fun createSystemOnlyTrustManager(): X509TrustManager? {
+        return try {
+            val androidCaStore = KeyStore.getInstance("AndroidCAStore")
+            androidCaStore.load(null)
+            val systemOnlyKeyStore = KeyStore.getInstance(KeyStore.getDefaultType())
+            systemOnlyKeyStore.load(null, null)
+            val aliases = androidCaStore.aliases()
+            var count = 0
+            while (aliases.hasMoreElements()) {
+                val alias = aliases.nextElement()
+                // Only trust pre-installed system CAs ("system:"), rejecting "user:" MITM proxy CAs
+                if (alias.startsWith("system:")) {
+                    val cert = androidCaStore.getCertificate(alias)
+                    if (cert != null) {
+                        systemOnlyKeyStore.setCertificateEntry(alias, cert)
+                        count++
+                    }
+                }
+            }
+            if (count == 0) return null
+            val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+            tmf.init(systemOnlyKeyStore)
+            val delegate = tmf.trustManagers.filterIsInstance<X509TrustManager>().firstOrNull() ?: return null
+            object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    delegate.checkClientTrusted(chain, authType)
+                }
+
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                    if (chain.isNullOrEmpty()) {
+                        throw CertificateException("Certificate chain is empty")
+                    }
+                    delegate.checkServerTrusted(chain, authType)
+                }
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = delegate.acceptedIssuers
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
@@ -334,7 +435,7 @@ class AiApiClient {
             FetchModelsResponse(
                 isSuccess = false,
                 models = fallback,
-                errorMessage = "שגיאת רשת בשליפת מודלים: ${e.localizedMessage ?: "לא ניתן להתחבר לשרת"}. מוצגים מודלים מומלצים בראש הרשימה."
+                errorMessage = "שגיאת רשת בשליפת מודלים: ${CryptoEngine.redactSecretsFromText(e.localizedMessage ?: "לא ניתן להתחבר לשרת", trimmedKey)}. מוצגים מודלים מומלצים בראש הרשימה."
             )
         }
     }
@@ -390,7 +491,8 @@ class AiApiClient {
 
     private fun fetchGeminiModels(apiKey: String): FetchModelsResponse {
         val req = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
+            .url("https://generativelanguage.googleapis.com/v1beta/models")
+            .addHeader("x-goog-api-key", apiKey)
             .get()
             .build()
         httpClient.newCall(req).execute().use { resp ->
@@ -930,7 +1032,7 @@ class AiApiClient {
 
         for (geminiModel in candidateModels) {
             try {
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent?key=$googleApiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent"
                 val rootJson = JSONObject().apply {
                     put(
                         "system_instruction",
@@ -1153,9 +1255,9 @@ class AiApiClient {
         val base = customBaseUrl?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
             ?: "https://generativelanguage.googleapis.com/v1beta"
         val url = if (base.contains(":generateContent")) {
-            if (base.contains("key=")) base else "$base?key=$apiKey"
+            base.substringBefore("?")
         } else {
-            "$base/models/$model:generateContent?key=$apiKey"
+            "$base/models/$model:generateContent"
         }
 
         val rootJson = JSONObject()
@@ -1535,9 +1637,10 @@ class AiApiClient {
         val response = try {
             httpClient.newCall(request).execute()
         } catch (e: IOException) {
+            val safeError = CryptoEngine.redactSecretsFromText(e.localizedMessage ?: "בדוק חיבור אינטרנט")
             throw AiCallException.ServerUnavailable(
-                "🌐 בעיית חיבור לרשת מול ${provider.displayName} [מודל '$model']: ${e.localizedMessage ?: "בדוק חיבור אינטרנט"}",
-                25L
+                "🌐 בעיית חיבור לרשת מול ${provider.displayName} [מודל '$model']: $safeError",
+                5L
             )
         }
 
@@ -1550,7 +1653,8 @@ class AiApiClient {
             } catch (e: AiCallException) {
                 throw e
             } catch (e: Exception) {
-                throw AiCallException.GeneralError("שגיאה בפענוח תשובה מ-${provider.displayName}: ${e.message}")
+                val safeError = CryptoEngine.redactSecretsFromText(e.message ?: "")
+                throw AiCallException.GeneralError("שגיאה בפענוח תשובה מ-${provider.displayName}: $safeError")
             }
         }
 

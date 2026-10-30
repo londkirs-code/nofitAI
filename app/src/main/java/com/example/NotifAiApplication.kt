@@ -19,8 +19,10 @@ class NotifAiApplication : Application() {
         instance = this
 
         try {
-            // Initialize AndroidKeyStore encryption
+            // Initialize AndroidKeyStore per-key envelope encryption
             CryptoEngine.init()
+            // Purge any legacy PIN lock preferences from older versions
+            deleteSharedPreferences("notifai_app_lock_prefs")
         } catch (e: Exception) {
             e.printStackTrace()
         }

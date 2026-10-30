@@ -297,8 +297,7 @@ class AiRepository(
         val activeGeminiKeyEntity = allEnabledKeys.firstOrNull { it.provider == ProviderType.GEMINI }
             ?: apiKeyDao.getAllKeys().firstOrNull { it.provider == ProviderType.GEMINI }
         val activeGeminiPlainKey = activeGeminiKeyEntity?.let {
-            PollinationsImageManager.getSessionOnlyKey(it.id)?.takeIf { k -> k.isNotBlank() }
-                ?: CryptoEngine.decrypt(it.encryptedKey)
+            decryptKeyInternal(it)
         }
         val googleTranslationKey = PollinationsImageManager.getGoogleTranslationKey(context, activeGeminiPlainKey)
         val pollinationsAspectRatio = PollinationsImageManager.getAspectRatio(context)
@@ -364,8 +363,7 @@ class AiRepository(
                 continue
             }
 
-            val rawKey = PollinationsImageManager.getSessionOnlyKey(keyEntity.id)?.takeIf { it.isNotBlank() }
-                ?: CryptoEngine.decrypt(keyEntity.encryptedKey)
+            val rawKey = decryptKeyInternal(keyEntity)
             if (rawKey.isBlank() && keyEntity.provider != ProviderType.POLLINATIONS) {
                 continue
             }
@@ -843,7 +841,11 @@ class AiRepository(
             if (plainKey.isBlank() && existing != null) {
                 existing.encryptedKey
             } else {
-                CryptoEngine.encrypt(plainKey)
+                CryptoEngine.encrypt(
+                    plainText = plainKey,
+                    keyId = targetId,
+                    aadContext = provider.name
+                )
             }
         }
         val resolvedEnabled = isEnabled ?: existing?.isEnabled ?: true
@@ -885,8 +887,35 @@ class AiRepository(
     }
 
     /**
-     * Duplicates an existing API key (preserving its encrypted key without exposing it)
-     * so the user can assign a different model, task type, or priority in 1 click (Task #3).
+     * Decrypts a key strictly for internal outbound API execution and transparently upgrades
+     * any legacy ciphertext to per-key Hardware Envelope Encryption (ENC_V2).
+     * Never exposed outside AiRepository.
+     */
+    private suspend fun decryptKeyInternal(entity: ApiKeyEntity): String {
+        val sessionKey = PollinationsImageManager.getSessionOnlyKey(entity.id)
+        if (!sessionKey.isNullOrBlank()) return sessionKey
+        if (entity.encryptedKey.isBlank()) return ""
+        val decrypted = CryptoEngine.decrypt(
+            encryptedText = entity.encryptedKey,
+            keyId = entity.id,
+            aadContext = entity.provider.name
+        )
+        if (decrypted.isNotBlank() && !entity.encryptedKey.startsWith("ENC_V2:")) {
+            val upgraded = CryptoEngine.encrypt(
+                plainText = decrypted,
+                keyId = entity.id,
+                aadContext = entity.provider.name
+            )
+            if (upgraded.startsWith("ENC_V2:")) {
+                apiKeyDao.update(entity.copy(encryptedKey = upgraded))
+            }
+        }
+        return decrypted
+    }
+
+    /**
+     * Duplicates an existing API key (re-wrapping its key in a dedicated isolated hardware key
+     * without ever exposing plaintext) so the user can assign a different model or priority.
      */
     suspend fun duplicateKey(keyId: String): ApiKeyEntity? {
         val original = apiKeyDao.getKeyById(keyId) ?: return null
@@ -894,9 +923,24 @@ class AiRepository(
         val nextPriority = (allKeys.maxOfOrNull { it.priority } ?: 0) + 1
         val altModel = original.provider.suggestedModels.firstOrNull { it != original.selectedModel }
             ?: original.selectedModel
+        val newId = UUID.randomUUID().toString()
+        val plain = decryptKeyInternal(original)
+        val newEncrypted = if (plain.isNotBlank() && original.encryptedKey.isNotBlank()) {
+            CryptoEngine.encrypt(
+                plainText = plain,
+                keyId = newId,
+                aadContext = original.provider.name
+            )
+        } else {
+            if (plain.isNotBlank()) {
+                PollinationsImageManager.putSessionOnlyKey(newId, plain)
+            }
+            ""
+        }
         val duplicated = original.copy(
-            id = UUID.randomUUID().toString(),
+            id = newId,
             name = "${original.name} (עותק)",
+            encryptedKey = newEncrypted,
             selectedModel = altModel,
             priority = nextPriority,
             isEnabled = true,
@@ -911,8 +955,7 @@ class AiRepository(
 
     suspend fun fetchModelsForKeyId(keyId: String): FetchModelsResponse {
         val key = apiKeyDao.getKeyById(keyId) ?: return FetchModelsResponse(false, emptyList(), "מפתח לא נמצא")
-        val plainKey = PollinationsImageManager.getSessionOnlyKey(key.id)?.takeIf { it.isNotBlank() }
-            ?: CryptoEngine.decrypt(key.encryptedKey)
+        val plainKey = decryptKeyInternal(key)
         return apiClient.fetchAvailableModelsDetailed(
             provider = key.provider,
             apiKey = plainKey,
@@ -934,13 +977,6 @@ class AiRepository(
         return apiClient.fetchAvailableModelsDetailed(provider, apiKey, customBaseUrl, customProtocol)
     }
 
-    suspend fun getDecryptedKey(id: String): String {
-        val sessionKey = PollinationsImageManager.getSessionOnlyKey(id)
-        if (!sessionKey.isNullOrBlank()) return sessionKey
-        val key = apiKeyDao.getKeyById(id) ?: return ""
-        return CryptoEngine.decrypt(key.encryptedKey)
-    }
-
     suspend fun updateKeyEntity(entity: ApiKeyEntity) {
         apiKeyDao.update(entity)
         if (entity.provider == ProviderType.POLLINATIONS || entity.id == BUILTIN_POLLINATIONS_KEY_ID) {
@@ -951,10 +987,13 @@ class AiRepository(
 
     suspend fun deleteKey(entity: ApiKeyEntity) {
         PollinationsImageManager.clearSessionOnlyKey(entity.id)
+        CryptoEngine.destroyKeyMaterial(entity.id)
         apiKeyDao.delete(entity)
     }
 
     suspend fun deleteAllKeys() {
+        PollinationsImageManager.clearAllSessionKeys()
+        CryptoEngine.destroyAllKeyMaterial()
         apiKeyDao.deleteAllKeys()
         ensureBuiltInPollinationsKey()
     }
@@ -970,9 +1009,14 @@ class AiRepository(
         val existing = apiKeyDao.getAllKeys()
         var nextPriority = (existing.maxOfOrNull { it.priority } ?: 0) + 1
         val entities = items.map { item ->
-            val encrypted = CryptoEngine.encrypt(item.rawKey.trim())
+            val newId = UUID.randomUUID().toString()
+            val encrypted = CryptoEngine.encrypt(
+                plainText = item.rawKey.trim(),
+                keyId = newId,
+                aadContext = item.provider.name
+            )
             ApiKeyEntity(
-                id = UUID.randomUUID().toString(),
+                id = newId,
                 provider = item.provider,
                 name = item.name.ifBlank { "${item.provider.displayName} #$nextPriority" },
                 encryptedKey = encrypted,
@@ -987,15 +1031,6 @@ class AiRepository(
         }
         apiKeyDao.insertAll(entities)
         return entities.size
-    }
-
-    suspend fun exportAllKeysWithPlain(): List<Pair<ApiKeyEntity, String>> {
-        val all = apiKeyDao.getAllKeys().sortedBy { it.priority }
-        return all.map { entity ->
-            val plain = PollinationsImageManager.getSessionOnlyKey(entity.id)?.takeIf { it.isNotBlank() }
-                ?: CryptoEngine.decrypt(entity.encryptedKey)
-            entity to plain
-        }
     }
 
     suspend fun clearKeySuspension(id: String) {

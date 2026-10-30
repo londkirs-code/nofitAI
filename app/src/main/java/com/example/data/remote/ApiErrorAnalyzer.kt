@@ -577,7 +577,7 @@ object ApiErrorAnalyzer {
 
     fun extractErrorMessage(body: String): String? {
         if (body.isBlank()) return null
-        return try {
+        val raw = try {
             val json = JSONObject(body)
             if (json.has("error")) {
                 val errorObj = json.get("error")
@@ -599,5 +599,7 @@ object ApiErrorAnalyzer {
         } catch (_: Exception) {
             body.take(200)
         }
+        return raw?.let { com.example.data.security.CryptoEngine.redactSecretsFromText(it) }
     }
 }
+

@@ -163,10 +163,6 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    suspend fun getDecryptedKey(id: String): String {
-        return repository.getDecryptedKey(id)
-    }
-
     suspend fun fetchModelsFromProvider(provider: ProviderType, apiKey: String): List<String> {
         _isFetchingModels.value = true
         return try {
@@ -253,16 +249,6 @@ class NotifAiViewModel(application: Application) : AndroidViewModel(application)
             ).show()
             onComplete(count)
         }
-    }
-
-    suspend fun exportKeysAsJson(): String {
-        val pairs = repository.exportAllKeysWithPlain()
-        return com.example.util.SmartKeyImporter.exportKeysToJson(pairs)
-    }
-
-    suspend fun exportKeysAsTxt(): String {
-        val pairs = repository.exportAllKeysWithPlain()
-        return com.example.util.SmartKeyImporter.exportKeysToTxt(pairs)
     }
 
     fun clearSuspension(entity: ApiKeyEntity) {
