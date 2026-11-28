@@ -1,0 +1,57 @@
+name: Sync nofitAI source from upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - ".github/workflows/sync-and-build.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync-build
+  cancel-in-progress: false
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Force sync app source to upstream and preserve this workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/ofirver-png/nofitAI.git
+          git fetch upstream main
+          local_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          cp .github/workflows/sync-and-build.yml "$RUNNER_TEMP/sync-and-build.yml"
+
+          if [ "$local_sha" = "$upstream_sha" ]; then
+            echo "Fork already matches upstream; no sync required."
+            exit 0
+          fi
+
+          # Upstream always wins for app source. Preserve only this automation file
+          # so the next scheduled sync continues to run.
+          git reset --hard "$upstream_sha"
+          mkdir -p .github/workflows
+          cp "$RUNNER_TEMP/sync-and-build.yml" .github/workflows/sync-and-build.yml
+          git add .github/workflows/sync-and-build.yml
+          if ! git diff --cached --quiet; then
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "ci: preserve upstream sync workflow"
+          fi
+          git push --force origin HEAD:main
+          echo "App source force-synced to upstream. Signed APK builds run from APK Factory so they use its existing signing secrets."
